@@ -45,3 +45,17 @@ test('mọi action bên ngoài ghim theo commit SHA 40 ký tự', () => {
   }
   assert.deepEqual(bad, []);
 });
+
+test('stack.yml: chọn phiên bản Ruby (app → root .ruby-version/.tool-versions → Gemfile → 3.4), lọc ký tự lạ', async () => {
+  const { runBlock, gitRepo, bash, wf } = await import('./helpers.mjs');
+  const s = runBlock(wf('stack.yml'), 'Phiên bản Ruby');
+  const v = (files, dir = 'api') => bash(s, { cwd: gitRepo(files).dir, env: { DIR: dir } }).outputs.version;
+  assert.equal(v({ 'api/.ruby-version': '3.3.1\n', '.ruby-version': '3.1.0\n' }), 'default');
+  assert.equal(v({ 'api/Gemfile': 'source "x"\n', '.ruby-version': 'ruby-3.2.2\n' }), '3.2.2');
+  assert.equal(v({ 'api/Gemfile': 'x', '.tool-versions': 'nodejs 24\nruby 3.3.4\n' }), '3.3.4');
+  assert.equal(v({ 'api/Gemfile': 'source "https://rubygems.org"\n\nruby "3.2.2"\ngem "rails"\n' }), '3.2.2');
+  assert.equal(v({ 'api/Gemfile': "ruby '3.1.4'\n" }), '3.1.4');
+  assert.equal(v({ 'api/Gemfile': 'ruby file: ".ruby-version"\n' }), '3.4');
+  assert.equal(v({ 'api/Gemfile': 'x', '.ruby-version': '3.2$(id)\n' }), '3.4');
+  assert.equal(v({ 'Gemfile': 'gem "rails"\n' }, '.'), '3.4');
+});

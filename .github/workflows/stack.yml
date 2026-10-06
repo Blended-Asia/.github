@@ -115,8 +115,25 @@ jobs:
         env:
           DIR: ${{ matrix.path }}
         run: |
-          if [ -f "$DIR/.ruby-version" ] || [ -f "$DIR/.tool-versions" ] || [ -f "$DIR/mise.toml" ]; then v=default; else v=3.4; fi
+          # ---- ruby-version:begin ----
+          # Thứ tự: file version trong thư mục app (setup-ruby tự đọc) → .ruby-version/.tool-versions ở root repo
+          #         → `ruby "x.y.z"` trong Gemfile của app → 3.4
+          if [ -f "$DIR/.ruby-version" ] || [ -f "$DIR/.tool-versions" ] || [ -f "$DIR/mise.toml" ]; then
+            v=default
+          elif [ -f .ruby-version ]; then
+            v=$(head -n1 .ruby-version)
+          elif [ -f .tool-versions ] && grep -qE '^ruby[[:space:]]' .tool-versions; then
+            v=$(grep -E '^ruby[[:space:]]' .tool-versions | head -n1 | awk '{print $2}')
+          elif [ -f "$DIR/Gemfile" ] && grep -qE '^[[:space:]]*ruby[[:space:]]+["'"'"'][0-9]' "$DIR/Gemfile"; then
+            v=$(grep -E '^[[:space:]]*ruby[[:space:]]+["'"'"'][0-9]' "$DIR/Gemfile" | head -n1 | sed -E 's/^[[:space:]]*ruby[[:space:]]+["'"'"']([^"'"'"']+).*/\1/')
+          else
+            v=3.4
+          fi
+          v=${v#ruby-}
+          # chỉ nhận ký tự hợp lệ của version (chặn ghi xuống dòng vào GITHUB_OUTPUT)
+          if ! printf '%s' "$v" | grep -qE '^[A-Za-z0-9._-]+$'; then v=3.4; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          # ---- ruby-version:end ----
       - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
         with:
           ruby-version: ${{ steps.rv.outputs.version }}
