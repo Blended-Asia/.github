@@ -4,7 +4,7 @@
 // ENV: PROFILE_PATH, PROFILE_NAME, CHECKS (JSON), BASE_SHA, SCOPE, HARNESS_DIR
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdtempSync, mkdirSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { addedLines, changedFiles, report, summary } from './lib.mjs';
@@ -14,6 +14,7 @@ const JS_EXT = /\.(js|jsx|ts|tsx|mjs|cjs|mts|cts|vue|svelte)$/;
 const PRETTIER_EXT = /\.(js|jsx|ts|tsx|mjs|cjs|mts|cts|json|css|scss|less|md|mdx|ya?ml|html|vue|graphql)$/;
 const RUBY_FILE = /\.(rb|rake|ru|gemspec|jbuilder)$|(^|\/)(Gemfile|Rakefile)$/;
 const DEPCRUISE = 'dependency-cruiser@18.5.0';
+const DEPCRUISE_TS = 'typescript@5.9.3'; // depcruise chưa hỗ trợ TS 7 (bản Go)
 const BRAKEMAN = '8.1.0';
 const tail = (s, n = 15) => String(s ?? '').trim().split('\n').slice(-n).join('\n');
 
@@ -173,7 +174,8 @@ export function makeContext(env = process.env, root = process.cwd()) {
       if (worktree !== undefined) return worktree;
       worktree = null;
       if (!base) return null;
-      const dir = path.join(mkdtempSync(path.join(tmpdir(), 'harness-base-')), 'wt');
+      // realpath: macOS tmpdir (/var → /private/var) là symlink, tool trả path thật → key baseline lệch
+      const dir = path.join(realpathSync(mkdtempSync(path.join(tmpdir(), 'harness-base-'))), 'wt');
       const r = spawnSync('git', ['worktree', 'add', '--detach', dir, base], { cwd: root, encoding: 'utf8' });
       if (r.status === 0) {
         worktree = dir;
@@ -189,6 +191,20 @@ export function makeContext(env = process.env, root = process.cwd()) {
       return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: (r.stderr ?? '') + (r.error ? String(r.error) : '') };
     },
   };
+}
+
+/**
+ * Cài dependency-cruiser + typescript vào thư mục riêng (1 lần/process). Không dùng `npx -p`: khi repo đã có
+ * typescript trong node_modules, npx không cài typescript cạnh depcruise → depcruise không thấy transpiler TS
+ * và bỏ qua mọi file .ts/.tsx mà vẫn exit 0.
+ */
+let depcruiseCache;
+function depcruiseBin(ctx) {
+  if (depcruiseCache !== undefined) return depcruiseCache;
+  const dir = mkdtempSync(path.join(tmpdir(), 'harness-depcruise-'));
+  const i = ctx.run('npm', ['install', '--prefix', dir, '--no-audit', '--no-fund', '--loglevel=error', DEPCRUISE, DEPCRUISE_TS], { quiet: true });
+  depcruiseCache = i.code === 0 ? path.join(dir, 'node_modules', '.bin', 'depcruise') : null;
+  return depcruiseCache;
 }
 
 const firstExisting = (dir, names) => names.find((n) => existsSync(path.join(dir, n)));
@@ -475,9 +491,15 @@ export function runJs(ctx) {
       const own = firstExisting(ctx.abs, ['.dependency-cruiser.js', '.dependency-cruiser.cjs', '.dependency-cruiser.mjs', '.dependency-cruiser.json']);
       const cfg = own ? path.join(ctx.abs, own) : path.join(ctx.harnessDir, 'profiles/starter/react/.dependency-cruiser.cjs');
       const tsArgs = existsSync(path.join(ctx.abs, 'tsconfig.json')) ? ['--ts-config', 'tsconfig.json'] : [];
-      const r = ctx.run('npx', ['-y', '-p', DEPCRUISE, '-p', 'typescript@5', 'depcruise', '--config', cfg, '--output-type', 'json', ...tsArgs, ...dirs], { quiet: true });
-      if (r.stdout.trim().startsWith('{')) findings.push(...onlyChanged(ctx, parseDepcruise(r.stdout, ctx.toRepo), notes, 'depcruise'));
-      else findings.push({ severity: 'warn', title: 'depcruise', message: `Không chạy được dependency-cruiser: ${tail(r.stderr, 3)}` });
+      const bin = depcruiseBin(ctx);
+      const r = bin ? ctx.run(bin, ['--config', cfg, '--output-type', 'json', ...tsArgs, ...dirs], { quiet: true }) : null;
+      if (r?.stdout.trim().startsWith('{')) {
+        findings.push(...onlyChanged(ctx, parseDepcruise(r.stdout, ctx.toRepo), notes, 'depcruise'));
+        // Không quét được file nào mà repo có TS/JS → tool đang "xanh giả" (vd thiếu transpiler TypeScript)
+        if (!JSON.parse(r.stdout).summary?.totalCruised && (changedJs ?? []).some((f) => dirs.some((d) => f.startsWith(`${d}/`)))) {
+          findings.push({ severity: 'warn', title: 'depcruise', message: `dependency-cruiser không quét được file nào trong ${dirs.join(', ')} — rule kiến trúc import không được kiểm tra.` });
+        }
+      } else findings.push({ severity: 'warn', title: 'depcruise', message: `Không chạy được dependency-cruiser: ${tail(r?.stderr ?? 'không cài được', 3)}` });
     }
   }
   return { findings, notes };

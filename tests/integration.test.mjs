@@ -65,6 +65,7 @@ test('react: ESLint + tsc + Prettier + dependency-cruiser trên Next.js thật',
   assert.ok(has(/file=web\/app\/client\.tsx,line=4,title=tsc TS2322/), r.ann.join('\n'));
   assert.ok(has(/file=web\/components\/Button\.tsx,title=prettier/), r.ann.join('\n'));
   assert.ok(has(/title=depcruise no-circular::Vòng import: lib\/b\.ts → lib\/c\.ts → lib\/b\.ts/), r.ann.join('\n'));
+  assert.ok(!has(/title=depcruise::/), 'dependency-cruiser phải quét được file TS (có typescript cạnh depcruise)\n' + r.ann.join('\n'));
   assert.ok(!has(/::error file=web\/lib\/legacy\.ts/), 'lỗi type có sẵn từ base không chặn, kể cả khi file bị sửa');
   assert.ok(has(/::error file=web\/lib\/old\.ts,line=3,title=eslint @typescript-eslint\/no-unused-vars/), r.ann.join('\n'));
   assert.ok(!has(/file=web\/lib\/old\.ts,line=2,title=eslint/), 'lỗi lint có sẵn ở dòng cũ không chặn');
