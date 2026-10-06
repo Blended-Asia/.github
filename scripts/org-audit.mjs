@@ -230,7 +230,7 @@ export async function auditRepo(gh, cfg, repo) {
   }
 
   // Leak trong repo
-  const envFiles = files.filter((f) => /(^|\/)\.env(\.[^/]+)?$/.test(f) && !/\.env\.(example|sample|template|defaults)$/.test(f));
+  const envFiles = files.filter((f) => /(^|\/)\.env(\.[^/]+)?$/.test(f) && !/\.env(\.[^/.]+)*\.(example|sample|template|defaults)$/.test(f));
   for (const f of envFiles) add('critical', `File env bị commit: \`${f}\` → xoá khỏi git + rotate secret`);
   if (has(/(^|\/)\.vercel\//)) add('critical', 'Thư mục `.vercel/` bị commit');
 

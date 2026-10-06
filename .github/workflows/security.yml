@@ -30,7 +30,7 @@ on:
       env_file_allowlist:
         description: Regex các file .env được phép commit
         type: string
-        default: '\.env\.(example|sample|template|defaults)$'
+        default: '\.env(\.[^/.]+)*\.(example|sample|template|defaults)$'
       public_env_prefixes:
         description: Prefix biến môi trường bị bundle ra client
         type: string

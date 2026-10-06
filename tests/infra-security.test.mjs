@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { wf, runBlock, between, inputDefaults, gitRepo, bash } from './helpers.mjs';
+import { wf, runBlock, between, inputDefaults, gitRepo, bash, ROOT } from './helpers.mjs';
 
 const infra = wf('infra.yml');
 const security = wf('security.yml');
@@ -176,8 +176,19 @@ test('.env và .vercel/ bị commit → fail; .env.example được phép', () =
   assert.match(r.stdout, /file=apps\/web\/\.env\.local/);
   assert.match(r.stdout, /file=\.vercel\/project\.json/);
   assert.doesNotMatch(r.stdout, /\.env\.example::/);
-  const good = gitRepo({ '.env.example': 'A=', '.envrc': 'x' });
-  assert.equal(bash(s, { cwd: good.dir, env: { ALLOW: S.env_file_allowlist } }).code, 0);
+  const good = gitRepo({ '.env.example': 'A=', '.envrc': 'x', '.env.staging.example': 'A=', 'jfoodhub/.env.production.sample': 'A=' });
+  assert.equal(bash(s, { cwd: good.dir, env: { ALLOW: S.env_file_allowlist } }).code, 0, 'file mẫu có đoạn giữa (.env.staging.example) được phép');
+  const tricky = gitRepo({ '.env.example.local': 'K=1', '.env.staging': 'K=1' });
+  const rt = bash(s, { cwd: tricky.dir, env: { ALLOW: S.env_file_allowlist } });
+  assert.equal(rt.code, 1);
+  assert.match(rt.stdout, /file=\.env\.example\.local/);
+  assert.match(rt.stdout, /file=\.env\.staging::/);
+});
+
+test('allowlist file env mẫu giống nhau ở security.yml, debt.mjs, org-audit.mjs', () => {
+  const lit = (p) => readFileSync(path.join(ROOT, p), 'utf8');
+  const re = S.env_file_allowlist;
+  for (const p of ['scripts/harness/debt.mjs', 'scripts/org-audit.mjs']) assert.ok(lit(p).includes(`!/${re}/.test(f)`), p);
 });
 
 test('biến NEXT_PUBLIC_*SERVICE_ROLE* → fail; NEXT_PUBLIC_SUPABASE_ANON_KEY ok', () => {

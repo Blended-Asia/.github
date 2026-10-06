@@ -36,7 +36,7 @@ export function measure({ root = '.', harnessDir = DEFAULT_HARNESS_DIR, reviewAt
     return { id: r.id, severity: r.severity, security: r.security, count: r.count, fileCount: r.files.size, top, suggest };
   }).sort((a, b) => b.count - a.count);
 
-  const envFiles = files.filter((f) => /(^|\/)\.env(\.[^/]+)?$/.test(f) && !/\.env\.(example|sample|template|defaults)$/.test(f));
+  const envFiles = files.filter((f) => /(^|\/)\.env(\.[^/]+)?$/.test(f) && !/\.env(\.[^/.]+)*\.(example|sample|template|defaults)$/.test(f));
   const vercelDir = files.filter((f) => /(^|\/)\.vercel\//.test(f));
   const badMigrations = files.filter((f) => /(^|\/)supabase\/migrations\/[^/]+\.sql$/.test(f) && !/^[0-9]{14}_[a-z0-9_]+\.sql$/.test(path.posix.basename(f)));
   const missing = [];
