@@ -111,10 +111,16 @@ jobs:
                       if pattern.search(l[1:]): hits.append((f, n))
                       n += 1
           else:
-              out = subprocess.run(["git", "grep", "-nIE", pattern.pattern, "--", *specs], capture_output=True, text=True).stdout
-              for l in out.splitlines():
-                  f, n, _ = l.split(":", 2)
-                  hits.append((f, int(n)))
+              # Không dùng `git grep -E`: `\b` không có trong ERE của BSD/macOS → bỏ sót.
+              files = subprocess.run(["git", "-c", "core.quotePath=false", "ls-files", "-z", "--", *specs],
+                                     capture_output=True, text=True, check=True).stdout.split("\0")
+              for f in filter(None, files):
+                  try:
+                      with open(f, encoding="utf-8", errors="replace") as fh:
+                          for n, l in enumerate(fh, 1):
+                              if pattern.search(l): hits.append((f, n))
+                  except (IsADirectoryError, FileNotFoundError):
+                      pass
           for f, n in hits:
               print(f"::error file={f},line={n}::Biến có prefix public nhưng tên giống secret, sẽ lộ ra trình duyệt.")
           print("OK" if not hits else f"{len(hits)} vi phạm")
