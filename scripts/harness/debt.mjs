@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// Đo "nợ" của một repo CÓ SẴN trước khi bật harness: mỗi rule kiến trúc đang bị vi phạm bao nhiêu chỗ,
-// file nào bị commit nhầm, migration nào sai tên… rồi đề xuất cấu hình .github/harness.yml.
+// Measure the "debt" of an EXISTING repo before enabling the harness: how many violations each architecture rule has,
+// which files were committed by mistake, which migrations are misnamed… then suggest a .github/harness.yml config.
 //
-// Chạy ở root của repo cần onboard (cần clone repo .github của org bên cạnh):
-//   node ../.github/scripts/harness/debt.mjs            → in báo cáo markdown
-//   node ../.github/scripts/harness/debt.mjs --json     → JSON cho máy đọc
-// ENV: HARNESS_DIR (mặc định: repo .github chứa script này), REVIEW_AT (mặc định 30)
+// Run at the root of the repo being onboarded (with the org's .github repo cloned alongside):
+//   node ../.github/scripts/harness/debt.mjs            → print a markdown report
+//   node ../.github/scripts/harness/debt.mjs --json     → machine-readable JSON
+// ENV: HARNESS_DIR (default: the .github repo containing this script), REVIEW_AT (default 30)
 //
-// Lưu ý cách đọc: trên PR rule kiến trúc chỉ xét DÒNG MỚI, nên nợ cũ không bao giờ chặn PR.
-// Số vi phạm cũ lớn chỉ là dấu hiệu rule có thể không hợp kiến trúc thực tế (code mới viết theo
-// pattern cũ sẽ bị chặn) → xem lại trong giai đoạn observe, KHÔNG tự tắt/hạ mức dựa trên con số này.
+// How to read it: on PRs, architecture rules only check NEW LINES, so existing debt never blocks a PR.
+// A large count of existing violations only hints that the rule may not fit the actual architecture (new code
+// following the old pattern will be blocked) → review during the observe phase; do NOT disable/downgrade based on this number.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig, DEFAULT_HARNESS_DIR } from './config.mjs';
@@ -28,10 +28,10 @@ export function measure({ root = '.', harnessDir = DEFAULT_HARNESS_DIR, reviewAt
     r.files.set(f.file, (r.files.get(f.file) ?? 0) + 1);
   }
   const rules = [...byRule.values()].map((r) => {
-    let suggest = 'giữ';
-    if (r.security) suggest = r.count ? 'giữ (rule bảo mật). Nợ cũ không chặn PR, nên mở issue sửa' : 'giữ (rule bảo mật)';
-    else if (r.count >= reviewAt) suggest = 'xem lại trong giai đoạn observe: code mới viết theo pattern cũ sẽ bị chặn';
-    else if (r.count) suggest = 'giữ: nợ cũ không chặn PR, dọn dần';
+    let suggest = 'keep';
+    if (r.security) suggest = r.count ? 'keep (security rule). Existing debt does not block PRs; open an issue to fix it' : 'keep (security rule)';
+    else if (r.count >= reviewAt) suggest = 'review during the observe phase: new code following the old pattern will be blocked';
+    else if (r.count) suggest = 'keep: existing debt does not block PRs; clean up gradually';
     const top = [...r.files.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
     return { id: r.id, severity: r.severity, security: r.security, count: r.count, fileCount: r.files.size, top, suggest };
   }).sort((a, b) => b.count - a.count);
@@ -42,40 +42,40 @@ export function measure({ root = '.', harnessDir = DEFAULT_HARNESS_DIR, reviewAt
   const missing = [];
   for (const p of cfg.profiles) {
     const has = (re) => files.some((f) => f.startsWith(p.path === '.' ? '' : `${p.path}/`) && re.test(path.posix.basename(f)));
-    if (p.name === 'rails' && !has(/^\.rubocop\.yml$/)) missing.push(`${p.path}: chưa có .rubocop.yml (profiles/starter/rails/.rubocop.yml)`);
-    if (p.name !== 'rails' && !has(/^(eslint\.config\.[cm]?[jt]s|\.eslintrc(\.\w+)?)$/)) missing.push(`${p.path}: chưa có ESLint config (profiles/starter/react/eslint.config.mjs)`);
+    if (p.name === 'rails' && !has(/^\.rubocop\.yml$/)) missing.push(`${p.path}: no .rubocop.yml yet (profiles/starter/rails/.rubocop.yml)`);
+    if (p.name !== 'rails' && !has(/^(eslint\.config\.[cm]?[jt]s|\.eslintrc(\.\w+)?)$/)) missing.push(`${p.path}: no ESLint config yet (profiles/starter/react/eslint.config.mjs)`);
   }
-  if (!files.includes('ARCHITECTURE.md')) missing.push('chưa có ARCHITECTURE.md (AI review cần, Claude Code viết từ code hiện có)');
+  if (!files.includes('ARCHITECTURE.md')) missing.push('no ARCHITECTURE.md yet (needed by AI review; have Claude Code write it from the existing code)');
 
-  const review = rules.filter((r) => r.suggest.startsWith('xem lại')).map((r) => ({ id: r.id, count: r.count }));
+  const review = rules.filter((r) => r.suggest.startsWith('review')).map((r) => ({ id: r.id, count: r.count }));
   return { profiles: cfg.profiles, detected: cfg.detected, rules, envFiles, vercelDir, badMigrations, missing, suggestion: { review } };
 }
 
 export function renderDebt(d) {
-  const L = ['# Báo cáo nợ trước khi bật harness', ''];
-  L.push(`Profile${d.detected ? ' (tự nhận diện)' : ''}: ${d.profiles.map((p) => `\`${p.name}\` @ \`${p.path}\``).join(', ') || '_không nhận diện được_'}`, '');
-  const crit = [...d.envFiles.map((f) => `File env bị commit: \`${f}\`: xoá khỏi git **và rotate secret**`), ...d.vercelDir.slice(0, 1).map(() => '`.vercel/` bị commit')];
-  if (crit.length) L.push('## 🔴 Sửa trước khi bật (chặn mọi PR kể cả ở chế độ enforce)', '', ...crit.map((c) => `- ${c}`), '');
-  L.push('## Rule kiến trúc trên toàn repo', '', '| Rule | Mức | Vi phạm | Số file | Nhiều nhất | Đề xuất |', '|---|---|--:|--:|---|---|');
+  const L = ['# Debt report before enabling the harness', ''];
+  L.push(`Profile${d.detected ? ' (auto-detected)' : ''}: ${d.profiles.map((p) => `\`${p.name}\` @ \`${p.path}\``).join(', ') || '_none detected_'}`, '');
+  const crit = [...d.envFiles.map((f) => `Env file committed: \`${f}\`: remove it from git **and rotate the secrets**`), ...d.vercelDir.slice(0, 1).map(() => '`.vercel/` committed')];
+  if (crit.length) L.push('## 🔴 Fix before enabling (blocks every PR, even in enforce mode)', '', ...crit.map((c) => `- ${c}`), '');
+  L.push('## Architecture rules across the whole repo', '', '| Rule | Severity | Violations | Files | Top files | Suggestion |', '|---|---|--:|--:|---|---|');
   for (const r of d.rules) {
     L.push(`| \`${r.id}\` | ${r.severity} | ${r.count} | ${r.fileCount} | ${r.top.map(([f, n]) => `\`${f}\` (${n})`).join(', ') || '-'} | ${r.suggest} |`);
   }
   L.push('');
-  if (d.badMigrations.length) L.push(`Migration đặt tên khác chuẩn (không chặn PR, chỉ áp cho migration mới): ${d.badMigrations.length} file.`, '');
-  if (d.missing.length) L.push('## Còn thiếu', '', ...d.missing.map((m) => `- ${m}`), '');
-  L.push('## Đề xuất `.github/harness.yml`', '', '```yaml', 'enforcement: observe', '');
+  if (d.badMigrations.length) L.push(`Migrations with non-standard names (does not block PRs; the rule only applies to new migrations): ${d.badMigrations.length} file(s).`, '');
+  if (d.missing.length) L.push('## Missing', '', ...d.missing.map((m) => `- ${m}`), '');
+  L.push('## Suggested `.github/harness.yml`', '', '```yaml', 'enforcement: observe', '');
   if (!d.detected || d.profiles.length > 1) {
     L.push('profiles:', ...d.profiles.map((p) => `  - name: ${p.name}\n    path: ${p.path}`), '');
   }
   if (d.suggestion.review.length) {
-    L.push('# Xem lại sau giai đoạn quan sát (nhiều vi phạm cũ → rule có thể không hợp kiến trúc thực tế).',
-      '# Chỉ hạ mức/tắt nếu thấy BÁO NHẦM trên PR thật, không dựa vào con số nợ cũ:',
-      ...d.suggestion.review.map((r) => `#   ${r.id} (${r.count} vi phạm cũ)`),
+    L.push('# Review after the observe phase (many existing violations → the rule may not fit the actual architecture).',
+      '# Only downgrade/disable if you see FALSE POSITIVES on real PRs, not based on the existing-debt count:',
+      ...d.suggestion.review.map((r) => `#   ${r.id} (${r.count} existing violations)`),
       '# architecture:', '#   severity:', '#     <rule-id>: warn', '#   disable: [<rule-id>]');
   }
   L.push('```', '',
-    'Trên PR, mọi check chỉ chặn **lỗi mới** (dòng mới với rule kiến trúc; so với bản base với ESLint, RuboCop, tsc, Brakeman, Trivy, Hadolint, compose), nên nợ cũ không cần baseline.',
-    'Riêng Supabase Advisor: chạy job một lần rồi copy key ở summary vào `advisors_ignore`.');
+    'On PRs, every check only blocks **new problems** (new lines for architecture rules; compared against the base for ESLint, RuboCop, tsc, Brakeman, Trivy, Hadolint, compose), so existing debt needs no baseline.',
+    'Supabase Advisor is the exception: run the job once, then copy the keys from its summary into `advisors_ignore`.');
   return L.join('\n');
 }
 

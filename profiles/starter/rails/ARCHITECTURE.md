@@ -1,20 +1,20 @@
-# Kiến trúc (Rails)
+# Architecture (Rails)
 
-Tài liệu này được harness đưa cho AI reviewer làm chuẩn đối chiếu. Viết ngắn, viết luật, không viết lịch sử.
+The harness gives this document to the AI reviewer as the reference standard. Keep it short; write rules, not history.
 
-## Lớp và trách nhiệm
-- **Controller**: nhận request, gọi service/model, chọn response. Không chứa business logic dài quá ~10 dòng, không SQL thô.
-- **Model**: dữ liệu, validation, scope, association. Không biết gì về HTTP (params, session, render).
-- **Service object** (`app/services`): nghiệp vụ nhiều bước, gọi API ngoài, transaction lớn. Một public method `call`.
-- **Query object** (`app/queries`): query phức tạp, tái sử dụng.
-- **View/Component**: chỉ hiển thị. Không query DB.
-- **Job** (`app/jobs`): idempotent, nhận id chứ không nhận object.
+## Layers and responsibilities
+- **Controller**: receives the request, calls services/models, picks the response. No business logic longer than ~10 lines, no raw SQL.
+- **Model**: data, validations, scopes, associations. Knows nothing about HTTP (params, session, render).
+- **Service object** (`app/services`): multi-step business logic, external API calls, large transactions. One public `call` method.
+- **Query object** (`app/queries`): complex, reusable queries.
+- **View/Component**: display only. No DB queries.
+- **Job** (`app/jobs`): idempotent; takes ids, not objects.
 
-## Quy tắc bắt buộc
-- Mọi endpoint mới phải có authorization (Pundit/CanCan/…) và request spec.
-- Migration: không gọi model của app, có `down` hoặc dùng `change` đảo ngược được; index cho mọi foreign key.
-- Không `update_all`/`delete_all` không điều kiện. Không N+1 trong vòng lặp hiển thị (dùng `includes`).
-- Secret chỉ đọc từ `Rails.application.credentials` hoặc ENV, không hardcode.
+## Mandatory rules
+- Every new endpoint has authorization (Pundit/CanCan/…) and a request spec.
+- Migrations: don't call app models; provide `down` or use a reversible `change`; index every foreign key.
+- No unconditional `update_all`/`delete_all`. No N+1 in rendering loops (use `includes`).
+- Secrets are only read from `Rails.application.credentials` or ENV, never hardcoded.
 
-## Ngoài phạm vi review
-Style, format (RuboCop lo), đặt tên biến.
+## Out of review scope
+Style and formatting (RuboCop handles them), variable naming.

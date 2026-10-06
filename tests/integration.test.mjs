@@ -1,5 +1,5 @@
-// Chạy tool THẬT (npm install Next/ESLint/TS, bundle RuboCop, gem Brakeman) trên repo mẫu.
-// Chậm (~2–4 phút) nên chỉ chạy khi HARNESS_INTEGRATION=1 (job integration trong self-test.yml).
+// Runs the REAL tools (npm install Next/ESLint/TS, bundle RuboCop, gem Brakeman) on sample repos.
+// Slow (~2–4 minutes), so it only runs when HARNESS_INTEGRATION=1 (the integration job in self-test.yml).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -21,7 +21,7 @@ function runStack(kind, repoDir, base, profilePath, checks) {
   return { code: r.status, ann: r.stdout.split('\n').filter((l) => /^::(error|warning)/.test(l)), out: r.stdout + r.stderr };
 }
 
-test('react: ESLint + tsc + Prettier + dependency-cruiser trên Next.js thật', { skip: !ON && 'đặt HARNESS_INTEGRATION=1', timeout: 600000 }, () => {
+test('react: ESLint + tsc + Prettier + dependency-cruiser on a real Next.js app', { skip: !ON && 'set HARNESS_INTEGRATION=1', timeout: 600000 }, () => {
   const repo = gitRepo({
     'web/package.json': JSON.stringify({
       name: 'web', private: true,
@@ -32,7 +32,7 @@ test('react: ESLint + tsc + Prettier + dependency-cruiser trên Next.js thật',
     'web/.gitignore': 'node_modules\nnext-env.d.ts\n',
     'web/app/page.tsx': 'export default function Page() {\n  return <div>home</div>;\n}\n',
     'web/lib/legacy.ts': "export const legacy: number = 'old';\n",
-    // file cũ: có lỗi lint và chưa format (thiếu dấu ;) từ trước
+    // old file: already has lint errors and is unformatted (missing ;) before the PR
     'web/lib/old.ts': 'export const a = 1\nconst unusedOld = 2\n',
     'web/lib/use.ts': 'const helper = 1;\nexport const v = helper;\n',
     'web/lib/util.ts': 'export function fmt(n: number): string {\n  return String(n);\n}\n',
@@ -48,13 +48,13 @@ test('react: ESLint + tsc + Prettier + dependency-cruiser trên Next.js thật',
     'web/components/Button.tsx': 'export function Button() { return <button>x</button> }\n',
     'web/lib/b.ts': "import { c } from './c';\nexport const b = () => c;\n",
     'web/lib/c.ts': "import { b } from './b';\nexport const c = () => b;\n",
-    // đổi tên hàm export → app/about/page.tsx (không đổi) bị vỡ type
+    // rename an exported function → app/about/page.tsx (unchanged) breaks type-checking
     'web/lib/util.ts': 'export function format(n: number): string {\n  return String(n);\n}\n',
-    // sửa 1 dòng trong file cũ: chỉ lỗi ở dòng mới bị chặn
+    // edit one line in an old file: only problems on the new line block
     'web/lib/old.ts': 'export const a = 1\nconst unusedOld = 2\nconst unusedNew = 3\n',
-    // bỏ chỗ dùng → biến ở dòng 1 (dòng cũ, không sửa) thành unused: vẫn phải bắt
+    // remove the usage → the variable on line 1 (old, unmodified line) becomes unused: must still be caught
     'web/lib/use.ts': 'const helper = 1;\nexport const v = 2;\n',
-    // chạm vào file có lỗi type từ trước: lỗi cũ không chặn
+    // touch a file with a pre-existing type error: the old error does not block
     'web/lib/legacy.ts': "export const legacy: number = 'old';\nexport const ok = 1;\n",
   });
   repo.commit('pr');
@@ -64,17 +64,17 @@ test('react: ESLint + tsc + Prettier + dependency-cruiser trên Next.js thật',
   assert.ok(has(/file=web\/app\/client\.tsx,line=3,title=eslint @typescript-eslint\/no-unused-vars/), r.ann.join('\n'));
   assert.ok(has(/file=web\/app\/client\.tsx,line=4,title=tsc TS2322/), r.ann.join('\n'));
   assert.ok(has(/file=web\/components\/Button\.tsx,title=prettier/), r.ann.join('\n'));
-  assert.ok(has(/title=depcruise no-circular::Vòng import: lib\/b\.ts → lib\/c\.ts → lib\/b\.ts/), r.ann.join('\n'));
-  assert.ok(!has(/title=depcruise::/), 'dependency-cruiser phải quét được file TS (có typescript cạnh depcruise)\n' + r.ann.join('\n'));
-  assert.ok(!has(/::error file=web\/lib\/legacy\.ts/), 'lỗi type có sẵn từ base không chặn, kể cả khi file bị sửa');
+  assert.ok(has(/title=depcruise no-circular::Import cycle: lib\/b\.ts → lib\/c\.ts → lib\/b\.ts/), r.ann.join('\n'));
+  assert.ok(!has(/title=depcruise::/), 'dependency-cruiser must scan TS files (typescript installed next to depcruise)\n' + r.ann.join('\n'));
+  assert.ok(!has(/::error file=web\/lib\/legacy\.ts/), 'pre-existing type errors from base do not block, even when the file is modified');
   assert.ok(has(/::error file=web\/lib\/old\.ts,line=3,title=eslint @typescript-eslint\/no-unused-vars/), r.ann.join('\n'));
-  assert.ok(!has(/file=web\/lib\/old\.ts,line=2,title=eslint/), 'lỗi lint có sẵn ở dòng cũ không chặn');
-  assert.ok(has(/::error file=web\/lib\/use\.ts,line=1,title=eslint @typescript-eslint\/no-unused-vars/), 'lỗi mới nằm ở dòng cũ vẫn phải chặn\n' + r.ann.join('\n'));
-  assert.ok(has(/::warning file=web\/lib\/old\.ts,title=prettier::File vốn chưa format/), r.ann.join('\n'));
-  assert.ok(has(/::error file=web\/app\/about\/page\.tsx,line=1,title=tsc TS2305::.*lỗi mới ở file không đổi/), 'lỗi do PR gây ra ở file không đổi phải chặn\n' + r.ann.join('\n'));
+  assert.ok(!has(/file=web\/lib\/old\.ts,line=2,title=eslint/), 'pre-existing lint errors on old lines do not block');
+  assert.ok(has(/::error file=web\/lib\/use\.ts,line=1,title=eslint @typescript-eslint\/no-unused-vars/), 'new problems on old lines must still block\n' + r.ann.join('\n'));
+  assert.ok(has(/::warning file=web\/lib\/old\.ts,title=prettier::File was already unformatted/), r.ann.join('\n'));
+  assert.ok(has(/::error file=web\/app\/about\/page\.tsx,line=1,title=tsc TS2305::.*new error in an unchanged file/), 'errors caused by the PR in unchanged files must block\n' + r.ann.join('\n'));
 });
 
-test('rails: RuboCop + Brakeman thật', { skip: !ON && 'đặt HARNESS_INTEGRATION=1', timeout: 600000 }, () => {
+test('rails: real RuboCop + Brakeman', { skip: !ON && 'set HARNESS_INTEGRATION=1', timeout: 600000 }, () => {
   const ruby = sh('ruby', ['-e', 'print RUBY_VERSION'], '.').stdout.trim();
   const repo = gitRepo({
     'api/Gemfile': 'source "https://rubygems.org"\nruby file: ".ruby-version"\ngem "rubocop-rails-omakase", require: false\n',
@@ -94,7 +94,7 @@ test('rails: RuboCop + Brakeman thật', { skip: !ON && 'đặt HARNESS_INTEGRAT
   repo.write({
     'api/app/controllers/users_controller.rb': 'class UsersController < ApplicationController\n  def index\n    @users = User.where("name = \'#{params[:name]}\'")\n    render json: @users\n  end\nend\n',
     'api/app/models/user.rb': "class User < ApplicationRecord\n  def label = 'single'\nend\n",
-    // offense mới ở DÒNG 2, offense cũ bị đẩy xuống dòng 3: phải báo đúng dòng 2
+    // new offense on LINE 2, old offense pushed down to line 3: must be reported on line 2
     'api/app/models/legacy.rb': "class Legacy\n  def y = 'new'\n  def x = 'old'\nend\n",
   });
   repo.commit('pr');
@@ -104,10 +104,10 @@ test('rails: RuboCop + Brakeman thật', { skip: !ON && 'đặt HARNESS_INTEGRAT
   assert.ok(has(/file=api\/app\/models\/user\.rb,line=2,title=rubocop Style\/StringLiterals/), r.ann.join('\n'));
   assert.ok(has(/::error file=api\/app\/controllers\/users_controller\.rb,line=3,title=brakeman SQL Injection/), r.ann.join('\n'));
   assert.ok(has(/file=api\/app\/models\/legacy\.rb,line=2,title=rubocop Style\/StringLiterals/), r.ann.join('\n'));
-  assert.ok(!has(/file=api\/app\/models\/legacy\.rb,line=3,/), 'offense có sẵn (dòng cũ bị đẩy xuống) không chặn');
+  assert.ok(!has(/file=api\/app\/models\/legacy\.rb,line=3,/), 'pre-existing offense (old line pushed down) does not block');
 });
 
-test('monorepo workspace: PR sửa package khác làm vỡ type ở app (không đổi) → vẫn chặn', { skip: !ON && 'đặt HARNESS_INTEGRATION=1', timeout: 600000 }, () => {
+test('monorepo workspace: PR changes another package and breaks types in an (unchanged) app → still blocks', { skip: !ON && 'set HARNESS_INTEGRATION=1', timeout: 600000 }, () => {
   const repo = gitRepo({
     'package.json': JSON.stringify({ name: 'mono', private: true, workspaces: ['packages/*', 'apps/*'], devDependencies: { typescript: '5.9.3' } }),
     'packages/shared/package.json': JSON.stringify({ name: '@acme/shared', version: '1.0.0', main: 'index.ts', types: 'index.ts' }),
@@ -124,5 +124,5 @@ test('monorepo workspace: PR sửa package khác làm vỡ type ở app (không 
   repo.commit('pr');
   const r = runStack('js', repo.dir, base, 'apps/web', { eslint: false, typecheck: true, prettier: false, depcruise: false });
   assert.equal(r.code, 1, r.out);
-  assert.ok(r.ann.some((l) => /::error file=apps\/web\/src\/a\.ts,line=2,title=tsc TS2322::.*do thay đổi trong PR gây ra/.test(l)), r.ann.join('\n') + r.out.slice(-1500));
+  assert.ok(r.ann.some((l) => /::error file=apps\/web\/src\/a\.ts,line=2,title=tsc TS2322::.*caused by changes in this PR/.test(l)), r.ann.join('\n') + r.out.slice(-1500));
 });

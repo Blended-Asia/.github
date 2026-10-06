@@ -1,32 +1,32 @@
-// Starter dependency-cruiser. Harness dùng file này khi repo chưa có .dependency-cruiser.*
+// Starter dependency-cruiser config. The harness uses this file when the repo has no .dependency-cruiser.* of its own
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
   forbidden: [
     {
       name: 'no-circular',
       severity: 'error',
-      comment: 'Vòng import làm khó test, khó tách module và hay gây lỗi undefined lúc khởi tạo.',
+      comment: 'Import cycles make testing and splitting modules harder and often cause undefined errors at initialization.',
       from: {},
       to: { circular: true },
     },
     {
       name: 'no-dev-deps-in-prod-code',
       severity: 'error',
-      comment: 'Code chạy thật không được import devDependencies (sẽ thiếu khi build production).',
+      comment: 'Production code must not import devDependencies (they are missing in production builds).',
       from: { path: '^(src|app|lib|components|pages|server|hooks|features)/', pathNot: '\\.(test|spec|stories)\\.[jt]sx?$' },
       to: { dependencyTypes: ['npm-dev'], dependencyTypesNot: ['type-only'] },
     },
     {
       name: 'no-unresolvable',
       severity: 'error',
-      comment: 'Import tới module không tồn tại / chưa khai báo trong package.json.',
+      comment: 'Import of a module that does not exist / is not declared in package.json.',
       from: {},
       to: { couldNotResolve: true },
     },
     {
       name: 'no-import-test-code',
       severity: 'error',
-      comment: 'Code chạy thật không import file test.',
+      comment: 'Production code must not import test files.',
       from: { pathNot: '\\.(test|spec)\\.[jt]sx?$' },
       to: { path: '\\.(test|spec)\\.[jt]sx?$' },
     },

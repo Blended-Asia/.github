@@ -1,4 +1,4 @@
-// Chạy tool theo stack cho 1 profile, chuẩn hoá kết quả thành annotation (path tính từ root repo).
+// Run the stack's tools for one profile and normalize results into annotations (paths relative to the repo root).
 //   node stack.mjs js      → eslint, tsc, prettier, dependency-cruiser
 //   node stack.mjs rails   → rubocop, brakeman, packwerk
 // ENV: PROFILE_PATH, PROFILE_NAME, CHECKS (JSON), BASE_SHA, SCOPE, HARNESS_DIR
@@ -14,11 +14,11 @@ const JS_EXT = /\.(js|jsx|ts|tsx|mjs|cjs|mts|cts|vue|svelte)$/;
 const PRETTIER_EXT = /\.(js|jsx|ts|tsx|mjs|cjs|mts|cts|json|css|scss|less|md|mdx|ya?ml|html|vue|graphql)$/;
 const RUBY_FILE = /\.(rb|rake|ru|gemspec|jbuilder)$|(^|\/)(Gemfile|Rakefile)$/;
 const DEPCRUISE = 'dependency-cruiser@18.5.0';
-const DEPCRUISE_TS = 'typescript@5.9.3'; // depcruise chưa hỗ trợ TS 7 (bản Go)
+const DEPCRUISE_TS = 'typescript@5.9.3'; // depcruise does not support TS 7 (the Go port) yet
 const BRAKEMAN = '8.1.0';
 const tail = (s, n = 15) => String(s ?? '').trim().split('\n').slice(-n).join('\n');
 
-// ---------- Parser (export để test) ----------
+// ---------- Parsers (exported for tests) ----------
 export function parseEslint(json, toRepo) {
   const out = [];
   for (const file of JSON.parse(json)) {
@@ -42,12 +42,12 @@ export function parseTsc(text, toRepo) {
   return out;
 }
 
-/** Khoá so sánh lỗi giữa base và PR: bỏ số dòng (dòng xê dịch khi sửa file). */
-export const findingKey = (f) => `${f.file}|${f.title}|${String(f.message).replace(/\b(line|column|dòng|cột)\s*\d+/gi, '$1 #')}`;
+/** Key for comparing findings between base and PR: drops line numbers (lines shift when a file is edited). */
+export const findingKey = (f) => `${f.file}|${f.title}|${String(f.message).replace(/\b(line|column)\s*\d+/gi, '$1 #')}`;
 
 /**
- * Tách lỗi ở file KHÔNG đổi thành: có sẵn từ base (không chặn) và mới do PR gây ra (chặn).
- * baseline: Map<key, count> hoặc null (không dựng được base → coi là có sẵn, như trước).
+ * Split findings in UNCHANGED files into: pre-existing on base (non-blocking) and new ones caused by the PR (blocking).
+ * baseline: Map<key, count> or null (base could not be built → treat as pre-existing, as before).
  */
 export function splitByBaseline(outside, baseline, keyFn = findingKey) {
   if (!baseline) return { fresh: [], preexisting: outside.length };
@@ -84,7 +84,7 @@ export function parseBrakeman(json, toRepo, failAt = 'Medium') {
     title: `brakeman ${w.warning_type}`, message: `${w.message} (${w.confidence})${w.link ? ` ${w.link}` : ''}`,
     fingerprint: w.fingerprint,
   }));
-  for (const e of data.errors ?? []) out.push({ severity: 'warn', title: 'brakeman', message: `Không phân tích được: ${e.error}`, file: e.location ? toRepo(e.location) : undefined });
+  for (const e of data.errors ?? []) out.push({ severity: 'warn', title: 'brakeman', message: `Could not analyze: ${e.error}`, file: e.location ? toRepo(e.location) : undefined });
   return out;
 }
 
@@ -95,7 +95,7 @@ export function parseDepcruise(json, toRepo) {
     const cycle = (v.cycle ?? []).map((c) => (typeof c === 'string' ? c : c.name));
     out.push({
       severity: v.rule.severity, file: toRepo(v.from), title: `depcruise ${v.rule.name}`,
-      message: cycle.length ? `Vòng import: ${[v.from, ...cycle].join(' → ')}` : `${v.from} → ${v.to}`,
+      message: cycle.length ? `Import cycle: ${[v.from, ...cycle].join(' → ')}` : `${v.from} → ${v.to}`,
       related: [v.from, v.to, ...cycle].map(toRepo),
     });
   }
@@ -110,12 +110,12 @@ export function parsePackwerk(text, toRepo) {
     if (!m) continue;
     const msg = [];
     for (let j = i + 1; j < lines.length && lines[j].trim() && !/^\S+\.(rb|rake|erb):\d+:\d+$/.test(lines[j].trim()); j++) msg.push(lines[j].trim());
-    out.push({ severity: 'error', file: toRepo(m[1]), line: Number(m[2]), title: 'packwerk', message: msg.join(' ') || 'Vi phạm ranh giới package' });
+    out.push({ severity: 'error', file: toRepo(m[1]), line: Number(m[2]), title: 'packwerk', message: msg.join(' ') || 'Package boundary violation' });
   }
   return out;
 }
 
-/** Tìm lockfile gần nhất từ dir đi lên tới root. */
+/** Find the nearest lockfile walking up from dir to root. */
 export function detectPM(dir, root) {
   const locks = [['pnpm-lock.yaml', 'pnpm'], ['yarn.lock', 'yarn'], ['bun.lock', 'bun'], ['bun.lockb', 'bun'], ['package-lock.json', 'npm']];
   let d = path.resolve(dir);
@@ -145,11 +145,11 @@ export function makeContext(env = process.env, root = process.cwd()) {
   const cleanup = [];
   let worktree;
   let added;
-  // line: lint/format chỉ chặn lỗi ở dòng thêm/sửa (sửa 1 dòng trong file cũ không phải dọn cả file) · file: cả file đổi
+  // line: lint/format only blocks problems on added/modified lines (editing one line of an old file doesn't require cleaning the whole file) · file: the whole changed file
   const granularity = env.GRANULARITY === 'file' ? 'file' : 'line';
   return {
     root, abs, base, scope, prefix, toRepo, changed, cleanup, granularity,
-    /** Map<path mới, path cũ> của file đổi tên trong PR (theo root repo). */
+    /** Map<new path, old path> of files renamed in the PR (relative to the repo root). */
     renames() {
       if (!base) return new Map();
       const out = spawnSync('git', ['-c', 'core.quotePath=false', 'diff', '-M', '--name-status', '--diff-filter=R', '-z', `${base}...HEAD`], { cwd: root, encoding: 'utf8' }).stdout ?? '';
@@ -158,23 +158,23 @@ export function makeContext(env = process.env, root = process.cwd()) {
       for (let i = 0; i + 2 < parts.length + 1; i += 3) if (parts[i]?.startsWith('R')) m.set(parts[i + 2], parts[i + 1]);
       return m;
     },
-    /** Mọi file đổi trong PR (cả ngoài profile), path theo root repo. */
+    /** Every file changed in the PR (including outside the profile), paths relative to the repo root. */
     changedAll() {
       return base ? changedFiles(base, root) : [];
     },
-    /** Map<path từ root repo, Set<số dòng thêm>> so với base. */
+    /** Map<path from repo root, Set<added line numbers>> relative to base. */
     addedMap() {
       if (added === undefined) added = base ? new Map([...addedLines(base, root)].map(([f, ls]) => [f, new Set(ls.map((l) => l.line))])) : null;
       return added;
     },
     checks: JSON.parse(env.CHECKS || '{}'),
     harnessDir: env.HARNESS_DIR || DEFAULT_HARNESS_DIR,
-    /** Checkout commit base ra thư mục tạm (git worktree), tạo 1 lần. null nếu không có base. */
+    /** Check out the base commit into a temp directory (git worktree), created once. null if there is no base. */
     baseWorktree() {
       if (worktree !== undefined) return worktree;
       worktree = null;
       if (!base) return null;
-      // realpath: macOS tmpdir (/var → /private/var) là symlink, tool trả path thật → key baseline lệch
+      // realpath: the macOS tmpdir (/var → /private/var) is a symlink and tools return the real path → baseline keys would mismatch
       const dir = path.join(realpathSync(mkdtempSync(path.join(tmpdir(), 'harness-base-'))), 'wt');
       const r = spawnSync('git', ['worktree', 'add', '--detach', dir, base], { cwd: root, encoding: 'utf8' });
       if (r.status === 0) {
@@ -194,9 +194,9 @@ export function makeContext(env = process.env, root = process.cwd()) {
 }
 
 /**
- * Cài dependency-cruiser + typescript vào thư mục riêng (1 lần/process). Không dùng `npx -p`: khi repo đã có
- * typescript trong node_modules, npx không cài typescript cạnh depcruise → depcruise không thấy transpiler TS
- * và bỏ qua mọi file .ts/.tsx mà vẫn exit 0.
+ * Install dependency-cruiser + typescript into a separate directory (once per process). Not `npx -p`: when the repo already has
+ * typescript in node_modules, npx doesn't install typescript next to depcruise → depcruise can't find the TS transpiler
+ * and silently skips every .ts/.tsx file while still exiting 0.
  */
 let depcruiseCache;
 function depcruiseBin(ctx) {
@@ -209,7 +209,7 @@ function depcruiseBin(ctx) {
 
 const firstExisting = (dir, names) => names.find((n) => existsSync(path.join(dir, n)));
 
-/** Tìm binary của tool trong node_modules/.bin từ thư mục profile đi lên (hỗ trợ workspace hoist). Yarn PnP → `yarn <tool>`. */
+/** Find a tool's binary in node_modules/.bin walking up from the profile directory (supports workspace hoisting). Yarn PnP → `yarn <tool>`. */
 export function resolveBin(tool, fromDir, rootDir) {
   let d = path.resolve(fromDir);
   const stop = path.resolve(rootDir);
@@ -224,7 +224,7 @@ export function resolveBin(tool, fromDir, rootDir) {
 
 const DEP_FILE = /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|yarn\.lock|bun\.lockb?|\.npmrc|\.yarnrc(\.yml)?|\.pnp\.c?js)$/;
 
-/** Thư mục package.json gần nhất chứa file (theo checkout của PR). */
+/** Nearest directory containing a package.json for the file (in the PR checkout). */
 function nearestPkgDir(root, file) {
   let d = path.dirname(path.join(root, file));
   for (;;) {
@@ -235,22 +235,22 @@ function nearestPkgDir(root, file) {
 }
 
 /**
- * Base có phải tự cài dependency không (thay vì mượn node_modules của PR qua symlink)?
- * Có, khi PR đổi manifest/lockfile, hoặc trong workspace PR đổi code ở package KHÁC (symlink workspace
- * trong node_modules trỏ về code của PR, nên base sẽ "thấy" thay đổi đó và coi lỗi do PR gây ra là có sẵn).
+ * Does the base need its own dependency install (instead of borrowing the PR's node_modules via symlink)?
+ * Yes, when the PR changes a manifest/lockfile, or in a workspace the PR changes code in ANOTHER package (workspace symlinks
+ * in node_modules point at the PR's code, so the base would "see" that change and treat problems caused by the PR as pre-existing).
  */
 function baseNeedsOwnDeps(ctx, pmDir) {
   const changed = ctx.changedAll();
   if (changed.some((f) => DEP_FILE.test(f))) return true;
   let workspace = existsSync(path.join(pmDir, 'pnpm-workspace.yaml'));
-  try { workspace ||= !!JSON.parse(readFileSync(path.join(pmDir, 'package.json'), 'utf8')).workspaces; } catch { /* không có package.json ở root */ }
+  try { workspace ||= !!JSON.parse(readFileSync(path.join(pmDir, 'package.json'), 'utf8')).workspaces; } catch { /* no package.json at root */ }
   return workspace && changed.some((f) => JS_EXT.test(f) && nearestPkgDir(ctx.root, f) !== ctx.abs);
 }
 
-/** Cài dependency tại dir. Trả về true nếu xong; với returnError trả về chuỗi lỗi thay vì false. */
+/** Install dependencies in dir. Returns true on success; with returnError, returns the error string instead of false. */
 function installDeps(ctx, dir, pm, noLock = !existsSync(path.join(dir, { pnpm: 'pnpm-lock.yaml', yarn: 'yarn.lock', npm: 'package-lock.json' }[pm] ?? 'bun.lock')), returnError = false) {
   if (['pnpm', 'yarn'].includes(pm) && ctx.run('corepack', ['--version'], { quiet: true }).code !== 0) {
-    // Node ≥ 25 không còn kèm corepack → cài từ npm
+    // Node ≥ 25 no longer ships corepack → install it from npm
     ctx.run('npm', ['install', '-g', 'corepack@latest'], { quiet: true });
   }
   const steps = {
@@ -266,7 +266,7 @@ function installDeps(ctx, dir, pm, noLock = !existsSync(path.join(dir, { pnpm: '
   return true;
 }
 
-/** Dùng node_modules của PR cho bản base (symlink), để chạy được tool ở base mà không cài lại. */
+/** Reuse the PR's node_modules for the base (symlink) so tools can run on the base without reinstalling. */
 function linkNodeModules(ctx, wt) {
   let d = ctx.abs;
   for (;;) {
@@ -281,7 +281,7 @@ function linkNodeModules(ctx, wt) {
   }
 }
 
-/** Giữ lỗi nằm trên dòng PR thêm/sửa (lỗi không có số dòng thì giữ). */
+/** Keep findings on lines the PR added/modified (findings without a line number are kept). */
 export function onlyAddedLines(findings, addedMap) {
   if (!addedMap) return { kept: findings, dropped: 0 };
   const kept = findings.filter((f) => !f.line || addedMap.get(f.file)?.has(f.line));
@@ -291,22 +291,22 @@ export function onlyAddedLines(findings, addedMap) {
 function lineFilter(ctx, findings, notes, label) {
   if (ctx.granularity === 'file' || !ctx.changed) return findings;
   const { kept, dropped } = onlyAddedLines(findings, ctx.addedMap());
-  if (dropped) notes.push(`${label}: ${dropped} lỗi ở dòng cũ của file đã sửa (không chặn, nên dọn dần).`);
+  if (dropped) notes.push(`${label}: ${dropped} problem(s) on unchanged lines of modified files (non-blocking; clean up gradually).`);
   return kept;
 }
 
 /**
- * Lỗi lint ở file đã sửa: chạy lại tool trên bản base của chính các file đó, chỉ giữ lỗi KHÔNG có ở base
- * (so theo file + rule + message, không theo số dòng). Bắt được cả lỗi mới nằm ở dòng cũ — vd xoá chỗ dùng
- * biến làm biến đó thành unused. Không dựng được base thì lùi về lọc theo dòng thêm.
- * runOnBase(wt, wtAbs, relFiles) → findings với path theo repo (hoặc null nếu tool lỗi).
+ * Lint problems in modified files: rerun the tool on the base version of those same files and keep only problems NOT on base
+ * (compared by file + rule + message, not line number). This also catches new problems on old lines — e.g. removing a usage
+ * of a variable makes it unused. If the base can't be built, fall back to filtering by added lines.
+ * runOnBase(wt, wtAbs, relFiles) → findings with repo-relative paths (or null if the tool failed).
  */
 function baselineFilter(ctx, findings, notes, label, runOnBase) {
   if (ctx.granularity === 'file' || !ctx.changed || !findings.length) return findings;
   const wt = ctx.baseWorktree();
   if (wt) {
     const wtAbs = path.join(wt, ctx.prefix);
-    // File đổi tên: chạy base trên path CŨ rồi quy key về path mới, để nợ cũ không thành "lỗi mới"
+    // Renamed files: run the base on the OLD path, then map keys to the new path so existing debt doesn't become "new problems"
     const renames = ctx.renames();
     const back = new Map();
     const rel = [];
@@ -323,12 +323,12 @@ function baselineFilter(ctx, findings, notes, label, runOnBase) {
         const k = findingKey({ ...f, file: back.get(f.file) ?? f.file });
         baseline.set(k, (baseline.get(k) ?? 0) + 1);
       }
-      // Trùng key (cùng rule + message): coi lỗi ở dòng KHÔNG sửa là lỗi cũ trước, để lỗi mới báo đúng dòng PR thêm
+      // Duplicate keys (same rule + message): count problems on UNMODIFIED lines as pre-existing first, so new problems are reported on the lines the PR added
       const added = ctx.addedMap();
       const onAdded = (f) => (added?.get(f.file)?.has(f.line) ? 1 : 0);
       const ordered = [...findings].sort((a, b) => onAdded(a) - onAdded(b));
       const { fresh, preexisting } = splitByBaseline(ordered, baseline);
-      if (preexisting) notes.push(`${label}: ${preexisting} lỗi có sẵn từ base trong các file đã sửa (không chặn, nên dọn dần).`);
+      if (preexisting) notes.push(`${label}: ${preexisting} pre-existing problem(s) from base in modified files (non-blocking; clean up gradually).`);
       return fresh.sort((a, b) => a.file.localeCompare(b.file) || (a.line ?? 0) - (b.line ?? 0));
     }
   }
@@ -340,7 +340,7 @@ function onlyChanged(ctx, findings, notes, label) {
   const set = new Set(ctx.changed.map((f) => ctx.prefix + f));
   const keep = findings.filter((f) => set.has(f.file) || (f.related ?? []).some((x) => set.has(x)));
   const dropped = findings.length - keep.length;
-  if (dropped) notes.push(`${label}: ${dropped} lỗi có sẵn ở file không đổi trong PR (không chặn).`);
+  if (dropped) notes.push(`${label}: ${dropped} pre-existing problem(s) in files not changed by the PR (non-blocking).`);
   return keep;
 }
 
@@ -350,32 +350,32 @@ export function runJs(ctx) {
   const pkg = JSON.parse(readFileSync(path.join(ctx.abs, 'package.json'), 'utf8'));
   const deps = { ...pkg.dependencies, ...pkg.devDependencies };
 
-  // 1) Cài dependency (một lần ở thư mục chứa lockfile, hỗ trợ workspace)
+  // 1) Install dependencies (once, in the lockfile's directory; supports workspaces)
   const { pm, dir, noLock } = detectPM(ctx.abs, ctx.root);
-  if (noLock) findings.push({ severity: 'warn', file: ctx.toRepo('package.json'), title: 'deps', message: 'Không có lockfile: build không tái lập được. Commit lockfile.' });
+  if (noLock) findings.push({ severity: 'warn', file: ctx.toRepo('package.json'), title: 'deps', message: 'No lockfile: builds are not reproducible. Commit a lockfile.' });
   if (!existsSync(path.join(dir, 'node_modules'))) {
     const err = installDeps(ctx, dir, pm, noLock, true);
     if (err !== true) {
-      findings.push({ severity: 'error', title: `${pm} install`, message: `Cài dependency thất bại: ${err}` });
+      findings.push({ severity: 'error', title: `${pm} install`, message: `Dependency install failed: ${err}` });
       return { findings, notes };
     }
   }
 
   const changedJs = ctx.changed?.filter((f) => JS_EXT.test(f) && existsSync(path.join(ctx.abs, f)));
   const skipLint = ctx.changed && !changedJs.length;
-  // Có config mà không có tool = cấu hình hỏng → lỗi (không âm thầm bỏ qua)
+  // Config present but tool missing = broken setup → error (don't silently skip)
   const tool = (name, label) => {
     const b = resolveBin(name, ctx.abs, ctx.root);
-    if (!b) findings.push({ severity: 'error', file: ctx.toRepo('package.json'), title: label, message: `Có config ${label} nhưng không tìm thấy ${name} trong node_modules. Thêm vào devDependencies.` });
+    if (!b) findings.push({ severity: 'error', file: ctx.toRepo('package.json'), title: label, message: `Found a ${label} config but ${name} is not in node_modules. Add it to devDependencies.` });
     return b;
   };
 
-  // 2) ESLint (config của repo)
+  // 2) ESLint (the repo's config)
   if (ctx.checks.eslint !== false) {
     const cfg = firstExisting(ctx.abs, ['eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts', 'eslint.config.mts',
       '.eslintrc.js', '.eslintrc.cjs', '.eslintrc.json', '.eslintrc.yml', '.eslintrc.yaml', '.eslintrc']) || pkg.eslintConfig;
     if (!cfg) {
-      findings.push({ severity: 'warn', file: ctx.toRepo('package.json'), title: 'eslint', message: 'Chưa có ESLint config. Copy profiles/starter/react/eslint.config.mjs từ repo .github của org.' });
+      findings.push({ severity: 'warn', file: ctx.toRepo('package.json'), title: 'eslint', message: 'No ESLint config. Copy profiles/starter/react/eslint.config.mjs from the org .github repo.' });
     } else if (!skipLint) {
       const b = tool('eslint', 'eslint');
       if (b) {
@@ -389,18 +389,18 @@ export function runJs(ctx) {
             const toRepoBase = (p) => path.relative(wt, path.resolve(wtAbs, p)).split(path.sep).join('/');
             return rb.stdout.trim().startsWith('[') ? parseEslint(rb.stdout, toRepoBase) : null;
           }));
-        } else findings.push({ severity: 'error', title: 'eslint', message: `ESLint lỗi khi chạy: ${tail(r.stderr || r.stdout, 5)}` });
+        } else findings.push({ severity: 'error', title: 'eslint', message: `ESLint failed to run: ${tail(r.stderr || r.stdout, 5)}` });
       }
     }
   }
 
   // 3) TypeScript
-  // tsc chạy cả khi PR chỉ đổi file không phải TS (vd package.json nâng version làm vỡ type ở chỗ khác)
+  // tsc runs even when the PR only changes non-TS files (e.g. a package.json version bump breaking types elsewhere)
   const NEXT_ENV = '/// <reference types="next" />\n/// <reference types="next/image-types/global" />\n';
-  // …và cả khi PR chỉ sửa package KHÁC trong workspace mà app này phụ thuộc (type có thể vỡ ở đây)
+  // …and also when the PR only changes ANOTHER workspace package this app depends on (types may break here)
   const typecheckNeeded = !ctx.changed || ctx.changed.length > 0 || baseNeedsOwnDeps(ctx, dir);
   if (ctx.checks.typecheck !== false && typecheckNeeded && existsSync(path.join(ctx.abs, 'tsconfig.json'))) {
-    // next-env.d.ts thường bị gitignore, thiếu nó tsc báo lỗi import ảnh/css
+    // next-env.d.ts is usually gitignored; without it tsc errors on image/css imports
     if (deps.next && !existsSync(path.join(ctx.abs, 'next-env.d.ts'))) writeFileSync(path.join(ctx.abs, 'next-env.d.ts'), NEXT_ENV);
     const b = tool('tsc', 'tsc');
     if (b) {
@@ -409,20 +409,20 @@ export function runJs(ctx) {
         return { r, errs: parseTsc(r.stdout, toRepo) };
       };
       const { r, errs } = tsc(ctx.abs, ctx.toRepo);
-      if (r.code !== 0 && !errs.length) findings.push({ severity: 'error', title: 'tsc', message: `tsc lỗi: ${tail(r.stdout + r.stderr, 5)}` });
+      if (r.code !== 0 && !errs.length) findings.push({ severity: 'error', title: 'tsc', message: `tsc failed: ${tail(r.stdout + r.stderr, 5)}` });
       if (!ctx.changed) findings.push(...errs);
       else {
         const set = new Set(ctx.changed.map((f) => ctx.prefix + f));
-        // granularity file: file đổi phải sạch hoàn toàn; line: chỉ chặn lỗi không có ở base
+        // granularity file: changed files must be fully clean; line: only block problems not present on base
         const strict = ctx.granularity === 'file' ? errs.filter((f) => set.has(f.file)) : [];
         findings.push(...strict);
         const rest = errs.filter((f) => !strict.includes(f));
         let baseline = null;
         const wt = rest.length ? ctx.baseWorktree() : null;
         if (wt && existsSync(path.join(wt, ctx.prefix, 'tsconfig.json'))) {
-          // Chạy tsc trên bản base để biết lỗi nào là do PR gây ra.
-          // Dùng chung node_modules của PR chỉ an toàn khi PR không đổi dependency hay package workspace khác:
-          // nếu đổi, base phải tự cài dependency của chính nó (symlink workspace sẽ trỏ về code của PR).
+          // Run tsc on the base to tell which errors the PR caused.
+          // Sharing the PR's node_modules is only safe when the PR doesn't change dependencies or other workspace packages:
+          // if it does, the base must install its own dependencies (workspace symlinks would point at the PR's code).
           const wtAbs = path.join(wt, ctx.prefix);
           const risky = baseNeedsOwnDeps(ctx, dir);
           const ready = risky ? installDeps(ctx, path.join(wt, path.relative(ctx.root, dir)), pm) : (linkNodeModules(ctx, wt), true);
@@ -442,18 +442,18 @@ export function runJs(ctx) {
           }
         }
         if (!baseline) {
-          // Không dựng được base đáng tin → không phân biệt được lỗi cũ/mới → chặn tất cả (an toàn hơn bỏ lọt)
-          findings.push(...rest.map((f) => ({ ...f, message: `${f.message} (không so được với base nên tính là lỗi)` })));
+          // No trustworthy base → can't tell old from new errors → block all (safer than letting them through)
+          findings.push(...rest.map((f) => ({ ...f, message: `${f.message} (could not compare with base, so counted as an error)` })));
         } else {
           const { fresh, preexisting } = splitByBaseline(rest, baseline);
-          findings.push(...fresh.map((f) => (set.has(f.file) ? f : { ...f, message: `${f.message} (lỗi mới ở file không đổi, do thay đổi trong PR gây ra)` })));
-          if (preexisting) notes.push(`tsc: ${preexisting} lỗi có sẵn từ base (không chặn, nên dọn dần).`);
+          findings.push(...fresh.map((f) => (set.has(f.file) ? f : { ...f, message: `${f.message} (new error in an unchanged file, caused by changes in this PR)` })));
+          if (preexisting) notes.push(`tsc: ${preexisting} pre-existing error(s) from base (non-blocking; clean up gradually).`);
         }
       }
     }
   }
 
-  // 4) Prettier (chỉ khi repo đã chọn dùng Prettier)
+  // 4) Prettier (only if the repo has opted into Prettier)
   const prettierCfg = firstExisting(ctx.abs, ['.prettierrc', '.prettierrc.json', '.prettierrc.yml', '.prettierrc.yaml', '.prettierrc.js',
     '.prettierrc.cjs', '.prettierrc.mjs', '.prettierrc.toml', 'prettier.config.js', 'prettier.config.cjs', 'prettier.config.mjs', 'prettier.config.ts']) || pkg.prettier;
   const prettierTargets = ctx.changed ? ctx.changed.filter((f) => PRETTIER_EXT.test(f) && existsSync(path.join(ctx.abs, f))) : ['.'];
@@ -462,7 +462,7 @@ export function runJs(ctx) {
     const r = ctx.run(pb[0], [...pb[1], '--list-different', '--ignore-unknown', ...prettierTargets], { quiet: true });
     if (r.code === 1) {
       const unformatted = r.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
-      // File vốn chưa format từ base (repo cũ) → chỉ cảnh báo; format cả file nên làm ở PR riêng cho dễ review
+      // File was already unformatted on base (legacy repo) → warn only; formatting the whole file belongs in a separate PR for easier review
       let legacy = new Set();
       const wt = ctx.granularity === 'line' && ctx.changed && pb[0] !== 'yarn' ? ctx.baseWorktree() : null;
       if (wt) {
@@ -476,15 +476,15 @@ export function runJs(ctx) {
       }
       for (const f of unformatted) {
         findings.push(legacy.has(f)
-          ? { severity: 'warn', file: ctx.toRepo(f), title: 'prettier', message: 'File vốn chưa format từ trước. Nên format cả file ở một PR riêng.' }
-          : { severity: 'error', file: ctx.toRepo(f), title: 'prettier', message: `Chưa format. Chạy: npx prettier --write ${f}` });
+          ? { severity: 'warn', file: ctx.toRepo(f), title: 'prettier', message: 'File was already unformatted before this PR. Format the whole file in a separate PR.' }
+          : { severity: 'error', file: ctx.toRepo(f), title: 'prettier', message: `Not formatted. Run: npx prettier --write ${f}` });
       }
     } else if (r.code !== 0) {
-      findings.push({ severity: 'error', title: 'prettier', message: `Prettier lỗi: ${tail(r.stderr, 5)}` });
+      findings.push({ severity: 'error', title: 'prettier', message: `Prettier failed: ${tail(r.stderr, 5)}` });
     }
   }
 
-  // 5) Kiến trúc import: dependency-cruiser
+  // 5) Import architecture: dependency-cruiser
   if (ctx.checks.depcruise !== false && !skipLint) {
     const dirs = (ctx.checks.depcruise_dirs ?? ['src', 'app', 'lib']).filter((d) => existsSync(path.join(ctx.abs, d)));
     if (dirs.length) {
@@ -495,11 +495,11 @@ export function runJs(ctx) {
       const r = bin ? ctx.run(bin, ['--config', cfg, '--output-type', 'json', ...tsArgs, ...dirs], { quiet: true }) : null;
       if (r?.stdout.trim().startsWith('{')) {
         findings.push(...onlyChanged(ctx, parseDepcruise(r.stdout, ctx.toRepo), notes, 'depcruise'));
-        // Không quét được file nào mà repo có TS/JS → tool đang "xanh giả" (vd thiếu transpiler TypeScript)
+        // No files cruised although the repo has TS/JS → the tool is a "false green" (e.g. missing TypeScript transpiler)
         if (!JSON.parse(r.stdout).summary?.totalCruised && (changedJs ?? []).some((f) => dirs.some((d) => f.startsWith(`${d}/`)))) {
-          findings.push({ severity: 'warn', title: 'depcruise', message: `dependency-cruiser không quét được file nào trong ${dirs.join(', ')} — rule kiến trúc import không được kiểm tra.` });
+          findings.push({ severity: 'warn', title: 'depcruise', message: `dependency-cruiser did not scan any files in ${dirs.join(', ')} — import architecture rules were not checked.` });
         }
-      } else findings.push({ severity: 'warn', title: 'depcruise', message: `Không chạy được dependency-cruiser: ${tail(r?.stderr ?? 'không cài được', 3)}` });
+      } else findings.push({ severity: 'warn', title: 'depcruise', message: `Could not run dependency-cruiser: ${tail(r?.stderr ?? 'install failed', 3)}` });
     }
   }
   return { findings, notes };
@@ -512,10 +512,10 @@ export function runRails(ctx) {
   const has = (gem) => new RegExp(`^ {4}${gem} \\(`, 'm').test(lock);
   const changedRb = ctx.changed?.filter((f) => RUBY_FILE.test(f) && existsSync(path.join(ctx.abs, f)));
 
-  // 1) RuboCop (bản trong Gemfile.lock của repo, đúng config của repo)
+  // 1) RuboCop (the version in the repo's Gemfile.lock, with the repo's config)
   if (ctx.checks.rubocop !== false) {
     if (!has('rubocop')) {
-      findings.push({ severity: 'warn', file: ctx.toRepo('Gemfile'), title: 'rubocop', message: 'Chưa có rubocop trong Gemfile. Thêm gem "rubocop-rails-omakase" và copy profiles/starter/rails/.rubocop.yml.' });
+      findings.push({ severity: 'warn', file: ctx.toRepo('Gemfile'), title: 'rubocop', message: 'No rubocop in Gemfile. Add gem "rubocop-rails-omakase" and copy profiles/starter/rails/.rubocop.yml.' });
     } else if (!ctx.changed || changedRb.length) {
       const rubocop = (cwd, files) => ctx.run('bundle', ['exec', 'rubocop', '--format', 'json', '--force-exclusion', ...files],
         { quiet: true, cwd, env: { BUNDLE_GEMFILE: path.join(ctx.abs, 'Gemfile') } });
@@ -526,19 +526,19 @@ export function runRails(ctx) {
           const toRepoBase = (p) => path.relative(wt, path.resolve(wtAbs, p)).split(path.sep).join('/');
           return rb.stdout.trim().startsWith('{') ? parseRubocop(rb.stdout, toRepoBase) : null;
         }));
-      } else findings.push({ severity: 'error', title: 'rubocop', message: `RuboCop lỗi khi chạy: ${tail(r.stderr, 5)}` });
+      } else findings.push({ severity: 'error', title: 'rubocop', message: `RuboCop failed to run: ${tail(r.stderr, 5)}` });
     }
   }
 
-  // 2) Brakeman (security cho Rails)
+  // 2) Brakeman (Rails security)
   if (ctx.checks.brakeman !== false) {
     let cmd = ['bundle', ['exec', 'brakeman']];
     if (!has('brakeman')) {
       const i = ctx.run('gem', ['install', 'brakeman', '-v', BRAKEMAN, '--no-document']);
-      // gọi bằng đường dẫn đầy đủ: thư mục bin của gem không phải lúc nào cũng nằm trong PATH
+      // call by full path: the gem bin directory isn't always on PATH
       const bindir = ctx.run('ruby', ['-e', 'print Gem.bindir'], { quiet: true }).stdout.trim();
       cmd = i.code === 0 ? [bindir ? path.join(bindir, 'brakeman') : 'brakeman', []] : null;
-      if (!cmd) findings.push({ severity: 'warn', title: 'brakeman', message: `Không cài được brakeman: ${tail(i.stderr, 3)}` });
+      if (!cmd) findings.push({ severity: 'warn', title: 'brakeman', message: `Could not install brakeman: ${tail(i.stderr, 3)}` });
     }
     if (cmd) {
       const brakeman = (target) => {
@@ -547,7 +547,7 @@ export function runRails(ctx) {
         return existsSync(out) ? { warnings: readFileSync(out, 'utf8') } : { error: tail(r.stderr, 5) };
       };
       const head = brakeman('.');
-      if (head.error) findings.push({ severity: 'error', title: 'brakeman', message: `Brakeman lỗi: ${head.error}` });
+      if (head.error) findings.push({ severity: 'error', title: 'brakeman', message: `Brakeman failed: ${head.error}` });
       else {
         const all = parseBrakeman(head.warnings, ctx.toRepo, ctx.checks.brakeman_fail_confidence);
         if (!ctx.changed) findings.push(...all);
@@ -559,7 +559,7 @@ export function runRails(ctx) {
           let baseline = null;
           const wt = outside.length ? ctx.baseWorktree() : null;
           if (wt) {
-            // Brakeman ở base: fingerprint ổn định khi dòng xê dịch → biết cảnh báo nào mới do PR
+            // Brakeman on base: fingerprints are stable when lines shift → tells which warnings are new in the PR
             const b = brakeman(path.join(wt, ctx.prefix));
             if (!b.error) {
               baseline = new Map();
@@ -570,19 +570,19 @@ export function runRails(ctx) {
             findings.push(...outside.filter((f) => set.has(f.file)));
           } else {
             const { fresh, preexisting } = splitByBaseline(outside, baseline, (f) => f.fingerprint);
-            findings.push(...fresh.map((f) => (set.has(f.file) ? f : { ...f, message: `${f.message} — mới do thay đổi trong PR` })));
-            if (preexisting) notes.push(`brakeman: ${preexisting} cảnh báo có sẵn từ base (không chặn).`);
+            findings.push(...fresh.map((f) => (set.has(f.file) ? f : { ...f, message: `${f.message} — new, caused by changes in this PR` })));
+            if (preexisting) notes.push(`brakeman: ${preexisting} pre-existing warning(s) from base (non-blocking).`);
           }
         }
       }
     }
   }
 
-  // 3) Packwerk (ranh giới package), nếu repo dùng
+  // 3) Packwerk (package boundaries), if the repo uses it
   const pw = ctx.checks.packwerk;
   if (pw === true || (pw === 'auto' && existsSync(path.join(ctx.abs, 'packwerk.yml')))) {
     if (!has('packwerk')) {
-      findings.push({ severity: 'warn', title: 'packwerk', message: 'Có packwerk.yml nhưng gem packwerk chưa có trong Gemfile.' });
+      findings.push({ severity: 'warn', title: 'packwerk', message: 'packwerk.yml exists but the packwerk gem is not in the Gemfile.' });
     } else if (!ctx.changed || changedRb.length) {
       const r = ctx.run('bundle', ['exec', 'packwerk', 'check', ...(changedRb ?? [])], { quiet: true });
       const v = parsePackwerk(r.stdout, ctx.toRepo);
@@ -602,11 +602,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   } finally {
     for (const fn of ctx.cleanup) fn();
   }
-  // push/schedule (không có base): quét toàn bộ để thấy nợ kỹ thuật nhưng chỉ cảnh báo, trừ khi repo chọn scope: all
+  // push/schedule (no base): scan everything to surface tech debt but only warn, unless the repo chose scope: all
   const informational = !ctx.base && process.env.SCOPE !== 'all';
   const findings = informational ? result.findings.map((f) => ({ ...f, severity: 'warn' })) : result.findings;
   const { notes } = result;
-  const errors = report(`${process.env.PROFILE_NAME || kind} @ ${process.env.PROFILE_PATH || '.'} (scope ${ctx.scope}${informational ? ', chỉ báo cáo' : ''})`, findings);
+  const errors = report(`${process.env.PROFILE_NAME || kind} @ ${process.env.PROFILE_PATH || '.'} (scope ${ctx.scope}${informational ? ', report only' : ''})`, findings);
   if (notes.length) summary(notes.map((n) => `> ${n}`).join('\n'));
   process.exit(errors ? 1 : 0);
 }

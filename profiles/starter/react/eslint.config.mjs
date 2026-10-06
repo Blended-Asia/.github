@@ -1,6 +1,6 @@
-// Starter ESLint (flat config) cho Next.js. Cần devDependencies:
+// Starter ESLint (flat config) for Next.js. Requires devDependencies:
 //   eslint eslint-config-next typescript-eslint
-// Với Vite/React thuần: thay "next/core-web-vitals" bằng eslint-plugin-react-hooks + typescript-eslint.
+// For Vite/plain React: replace "next/core-web-vitals" with eslint-plugin-react-hooks + typescript-eslint.
 import next from 'eslint-config-next/core-web-vitals';
 import tseslint from 'typescript-eslint';
 

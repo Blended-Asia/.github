@@ -1,17 +1,17 @@
-# Reusable: check theo stack + architecture scan, cấu hình bởi .github/harness.yml của repo.
-#   plan          – đọc config, nhận diện profile (rails / react / node) và thư mục
-#   architecture  – rule kiến trúc (mọi ngôn ngữ), mặc định chỉ xét dòng thêm/sửa trong PR
-#   rails         – RuboCop, Brakeman, Packwerk (mỗi thư mục Rails 1 job)
-#   js            – ESLint, tsc, Prettier, dependency-cruiser (mỗi thư mục JS/TS 1 job)
-# Script và profile mặc định được lấy từ repo .github của org tại ref `harness_ref` (repo đó phải public).
-# Trên PR, .github/harness.yml được đọc từ commit BASE: PR không tự nới lỏng luật chấm chính nó.
+# Reusable: per-stack checks + architecture scan, configured by the repo's .github/harness.yml.
+#   plan          – read config, detect profiles (rails / react / node) and their directories
+#   architecture  – architecture rules (all languages); by default only lines added/modified in the PR
+#   rails         – RuboCop, Brakeman, Packwerk (one job per Rails directory)
+#   js            – ESLint, tsc, Prettier, dependency-cruiser (one job per JS/TS directory)
+# Scripts and default profiles come from the org's .github repo at ref `harness_ref` (that repo must be public).
+# On PRs, .github/harness.yml is read from the BASE commit: a PR cannot loosen the rules that grade it.
 name: stack
 
 on:
   workflow_call:
     inputs:
       harness_ref:
-        description: Ref của repo .github chứa scripts/harness và profiles (giữ trùng với @ref của workflow)
+        description: Ref of the .github repo containing scripts/harness and profiles (keep in sync with the workflow's @ref)
         type: string
         default: v1
       config_path:
@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # cần commit base: harness.yml được đọc từ base, PR không tự nới lỏng được
+          fetch-depth: 0 # needs the base commit: harness.yml is read from base so a PR cannot loosen it
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,7 +49,7 @@ jobs:
             scripts/harness
             profiles
           persist-credentials: false
-      # Đưa ra ngoài workspace để ESLint/Prettier của repo không quét nhầm code harness
+      # Move it out of the workspace so the repo's ESLint/Prettier don't scan harness code by mistake
       - run: mv .harness "$RUNNER_TEMP/harness"
       - id: plan
         env:
@@ -75,9 +75,9 @@ jobs:
             scripts/harness
             profiles
           persist-credentials: false
-      # Đưa ra ngoài workspace để ESLint/Prettier của repo không quét nhầm code harness
+      # Move it out of the workspace so the repo's ESLint/Prettier don't scan harness code by mistake
       - run: mv .harness "$RUNNER_TEMP/harness"
-      - name: Rule kiến trúc
+      - name: Architecture rules
         env:
           HARNESS_DIR: ${{ runner.temp }}/harness
         run: |
@@ -108,16 +108,16 @@ jobs:
             scripts/harness
             profiles
           persist-credentials: false
-      # Đưa ra ngoài workspace để ESLint/Prettier của repo không quét nhầm code harness
+      # Move it out of the workspace so the repo's ESLint/Prettier don't scan harness code by mistake
       - run: mv .harness "$RUNNER_TEMP/harness"
-      - name: Phiên bản Ruby
+      - name: Ruby version
         id: rv
         env:
           DIR: ${{ matrix.path }}
         run: |
           # ---- ruby-version:begin ----
-          # Thứ tự: file version trong thư mục app (setup-ruby tự đọc) → .ruby-version/.tool-versions ở root repo
-          #         → `ruby "x.y.z"` trong Gemfile của app → 3.4
+          # Order: version file in the app directory (setup-ruby reads it itself) → .ruby-version/.tool-versions at the repo root
+          #        → `ruby "x.y.z"` in the app's Gemfile → 3.4
           if [ -f "$DIR/.ruby-version" ] || [ -f "$DIR/.tool-versions" ] || [ -f "$DIR/mise.toml" ]; then
             v=default
           elif [ -f .ruby-version ]; then
@@ -130,7 +130,7 @@ jobs:
             v=3.4
           fi
           v=${v#ruby-}
-          # chỉ nhận ký tự hợp lệ của version (chặn ghi xuống dòng vào GITHUB_OUTPUT)
+          # only accept valid version characters (prevents injecting newlines into GITHUB_OUTPUT)
           if ! printf '%s' "$v" | grep -qE '^[A-Za-z0-9._-]+$'; then v=3.4; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           # ---- ruby-version:end ----
@@ -173,9 +173,9 @@ jobs:
             scripts/harness
             profiles
           persist-credentials: false
-      # Đưa ra ngoài workspace để ESLint/Prettier của repo không quét nhầm code harness
+      # Move it out of the workspace so the repo's ESLint/Prettier don't scan harness code by mistake
       - run: mv .harness "$RUNNER_TEMP/harness"
-      - name: Phiên bản Node
+      - name: Node version
         id: nv
         env:
           DIR: ${{ matrix.path }}

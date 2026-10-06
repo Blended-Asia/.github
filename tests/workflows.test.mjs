@@ -1,4 +1,4 @@
-// Luật cho chính các workflow trong repo: không ${{ }} trong thân script, action ghim theo SHA.
+// Rules for this repo's own workflows: no ${{ }} in script bodies, actions pinned by SHA.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
@@ -17,7 +17,7 @@ function* steps(wf) {
   }
 }
 
-test('không có ${{ }} trong thân run/script (chống script injection, truyền qua env)', () => {
+test('no ${{ }} in run/script bodies (prevents script injection; pass values via env)', () => {
   const bad = [];
   for (const f of files) {
     for (const { jobId, st } of steps(loadYaml(path.join(ROOT, f)))) {
@@ -29,7 +29,7 @@ test('không có ${{ }} trong thân run/script (chống script injection, truy�
   assert.deepEqual(bad, []);
 });
 
-test('mọi action bên ngoài ghim theo commit SHA 40 ký tự', () => {
+test('every external action is pinned to a 40-character commit SHA', () => {
   const bad = [];
   for (const f of files) {
     const wf = loadYaml(path.join(ROOT, f));
@@ -38,7 +38,7 @@ test('mọi action bên ngoài ghim theo commit SHA 40 ký tự', () => {
       if (u.startsWith('./') || u.startsWith('docker://')) continue;
       if (!/@[0-9a-f]{40}$/.test(u)) bad.push(`${f}: ${u}`);
     }
-    // job gọi reusable workflow của chính org (Blended-Asia/.github/...@v1) được phép dùng tag
+    // jobs calling the org's own reusable workflows (Blended-Asia/.github/...@v1) may use a tag
     for (const job of Object.values(wf.jobs ?? {})) {
       if (job.uses && !/^[\w.-]+\/\.github\/\.github\/workflows\/[\w-]+\.yml@[\w.-]+$/.test(job.uses)) bad.push(`${f}: ${job.uses}`);
     }
@@ -46,9 +46,9 @@ test('mọi action bên ngoài ghim theo commit SHA 40 ký tự', () => {
   assert.deepEqual(bad, []);
 });
 
-test('stack.yml: chọn phiên bản Ruby (app → root .ruby-version/.tool-versions → Gemfile → 3.4), lọc ký tự lạ', async () => {
+test('stack.yml: picks the Ruby version (app → root .ruby-version/.tool-versions → Gemfile → 3.4) and rejects odd characters', async () => {
   const { runBlock, gitRepo, bash, wf } = await import('./helpers.mjs');
-  const s = runBlock(wf('stack.yml'), 'Phiên bản Ruby');
+  const s = runBlock(wf('stack.yml'), 'Ruby version');
   const v = (files, dir = 'api') => bash(s, { cwd: gitRepo(files).dir, env: { DIR: dir } }).outputs.version;
   assert.equal(v({ 'api/.ruby-version': '3.3.1\n', '.ruby-version': '3.1.0\n' }), 'default');
   assert.equal(v({ 'api/Gemfile': 'source "x"\n', '.ruby-version': 'ruby-3.2.2\n' }), '3.2.2');

@@ -12,7 +12,7 @@ const apply = (args, env = {}) => {
 const prParams = (rs) => rs.rules.find((r) => r.type === 'pull_request').parameters;
 const checks = (rs) => rs.rules.find((r) => r.type === 'required_status_checks').parameters.required_status_checks.map((c) => c.context);
 
-test('4 ruleset nhóm: đúng nhánh, approve theo team/solo, cho phép squash + merge, cùng required checks', () => {
+test('4 group rulesets: correct branch, approvals per team/solo, allow squash + merge, same required checks', () => {
   const base = JSON.parse(readFileSync(path.join(ROOT, 'rulesets/org-baseline.json'), 'utf8'));
   for (const [kind, ref, approvals] of [
     ['trunk-team', '~DEFAULT_BRANCH', 1], ['trunk-solo', '~DEFAULT_BRANCH', 0],
@@ -33,10 +33,10 @@ test('4 ruleset nhóm: đúng nhánh, approve theo team/solo, cho phép squash +
   }
 });
 
-test('apply-ruleset: ruleset nhóm thiếu REPOS → dừng; BRANCHES ghi đè; enforcement; kiểu lạ → lỗi; cách gọi cũ vẫn chạy', () => {
+test('apply-ruleset: group ruleset without REPOS → stops; BRANCHES overrides; enforcement; unknown kind → error; legacy invocation still works', () => {
   const none = apply(['acme', 'gitflow-team']);
   assert.equal(none.code, 2);
-  assert.match(none.err, /chưa có repo nào/);
+  assert.match(none.err, /has no repos/);
   const br = apply(['acme', 'gitflow-team', 'disabled'], { REPOS: 'web', BRANCHES: 'refs/heads/develop,refs/heads/release/*' });
   assert.deepEqual(br.json.conditions.ref_name.include, ['refs/heads/develop', 'refs/heads/release/*']);
   assert.equal(br.json.enforcement, 'disabled');

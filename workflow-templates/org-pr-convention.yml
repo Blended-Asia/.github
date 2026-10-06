@@ -1,4 +1,4 @@
-# Do org quản lý — không sửa trực tiếp, đổi config qua `with:` bên dưới.
+# Managed by the org — do not edit directly; change config via `with:` below.
 name: org-pr-convention
 
 on:
@@ -18,7 +18,7 @@ jobs:
   org:
     uses: Blended-Asia/.github/.github/workflows/pr-convention.yml@v1
     # with:
-    #   ticket_pattern: '[A-Z][A-Z0-9_]+-[0-9]+'   # bắt buộc mã Backlog/Jira
+    #   ticket_pattern: '[A-Z][A-Z0-9_]+-[0-9]+'   # require a Backlog/Jira ticket key
     #   require_scope: true
     #   allowed_scopes: api,web,db,infra
     #   size_mode: fail

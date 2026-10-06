@@ -1,54 +1,54 @@
-# Blended-Asia/.github: harness cho mọi PR
+# Blended-Asia/.github: a harness for every PR
 
-> Làm tiếp với Claude Code: đọc `CLAUDE.md` (bối cảnh + bất biến) và `HANDOFF.md` (việc còn lại theo phase).
+> Continuing with Claude Code: read `CLAUDE.md` (context + invariants) and `HANDOFF.md` (remaining work by phase).
 
-**Harness** = toàn bộ cơ chế quanh một PR gồm hai phần:
-- **Sensor**: các check (security, infra, convention, kiến trúc) chạy theo đúng stack của repo.
-- **Gate**: vòng phản hồi. Chưa đạt thì comment lý do và chỗ cần sửa. Đạt thì approve (nếu rủi ro thấp) và tự merge.
+**Harness** = all the machinery around a PR, in two parts:
+- **Sensors**: the checks (security, infra, convention, architecture) that run according to the repo's stack.
+- **Gate**: the feedback loop. If the PR does not pass, it comments with the reasons and what to fix. If it passes, it approves (when risk is low) and merges automatically.
 
-Logic nằm ở repo này, ghim theo tag `v1`. Mỗi repo con chỉ cần 2 file caller ngắn và một file cấu hình `.github/harness.yml` (không bắt buộc).
+The logic lives in this repo, pinned to the `v1` tag. Each child repo only needs 2 short caller files and an optional config file `.github/harness.yml`.
 
 ```
-PR mở / push commit
- ├─ org-pr-convention.yml ──► org / pr-convention            (title, branch, mô tả, size)   ← required
+PR opened / commit pushed
+ ├─ org-pr-convention.yml ──► org / pr-convention            (title, branch, description, size)   ← required
  └─ org-harness.yml
-      ├─ security   TruffleHog · Trivy CVE · Semgrep · .env/secret công khai
-      ├─ infra      Docker · Vercel · Supabase (tự phát hiện)
-      ├─ stack      plan → architecture (mọi ngôn ngữ)
-      │                  → rails (RuboCop · Brakeman · Packwerk)      ┐ mỗi thư mục
-      │                  → react / node (ESLint · tsc · Prettier · dependency-cruiser) ┘ 1 job
-      └─ harness / gate  ◄── gom kết quả + AI review (tuỳ chọn)                        ← required
-              ├─ ❌ chưa đạt → sticky comment: job nào fail, file:dòng, cách sửa
-              └─ ✅ đạt     → nhỏ & không đụng path nhạy cảm: bot approve
-                              → bật auto-merge: GitHub tự merge khi đủ required checks + review
-Ruleset org-baseline ──► bắt buộc 2 required check trên
-org-audit (thứ Hai) ──► quét mọi repo, phát hiện caller bị sửa / config nới lỏng, mở PR áp dụng
+      ├─ security   TruffleHog · Trivy CVE · Semgrep · .env/public secrets
+      ├─ infra      Docker · Vercel · Supabase (auto-detected)
+      ├─ stack      plan → architecture (any language)
+      │                  → rails (RuboCop · Brakeman · Packwerk)      ┐ one job
+      │                  → react / node (ESLint · tsc · Prettier · dependency-cruiser) ┘ per directory
+      └─ harness / gate  ◄── aggregate results + AI review (optional)                  ← required
+              ├─ ❌ not passing → sticky comment: which job failed, file:line, how to fix
+              └─ ✅ passing     → small & no sensitive paths touched: bot approves
+                                → enable auto-merge: GitHub merges once required checks + reviews are satisfied
+Ruleset org-baseline ──► requires the 2 checks above
+org-audit (Mondays) ──► scans every repo, detects modified callers / loosened config, opens adoption PRs
 ```
 
-## Template theo stack (profile)
+## Templates per stack (profiles)
 
-Không làm template cho từng repo mà làm theo **profile của stack**. Repo chỉ khai báo mình thuộc profile nào (hoặc để tự nhận diện) và ghi đè chỗ khác biệt.
+Templates are not per repo but per **stack profile**. A repo only declares which profile it belongs to (or lets it be auto-detected) and overrides what differs.
 
-| Profile | Nhận diện | Tool | Rule kiến trúc mặc định |
+| Profile | Detection | Tools | Default architecture rules |
 |---|---|---|---|
-| `rails` | Gemfile có `rails` | RuboCop (config của repo), Brakeman (chặn từ confidence Medium), Packwerk nếu có `packwerk.yml` | model không dùng params/session/render · view không query DB · controller không SQL thô · migration không gọi model của app · tắt CSRF phải review |
-| `react` | package.json có react/next | ESLint (config của repo), `tsc --noEmit`, Prettier (nếu repo dùng), dependency-cruiser: vòng import, import devDependency vào code chạy thật, import không resolve được | client component không đọc env server / service role / import code server · `components/` không import từ `app/`/`pages/` · cảnh báo `dangerouslySetInnerHTML`, `@ts-ignore` |
-| `node` | package.json khác | như `react` | không ghép chuỗi vào SQL · cảnh báo `console.log` |
+| `rails` | Gemfile contains `rails` | RuboCop (repo config), Brakeman (blocks from Medium confidence), Packwerk if `packwerk.yml` exists | models don't use params/session/render · views don't query the DB · controllers don't use raw SQL · migrations don't call app models · disabling CSRF requires review |
+| `react` | package.json has react/next | ESLint (repo config), `tsc --noEmit`, Prettier (if the repo uses it), dependency-cruiser: import cycles, devDependency imports in production code, unresolvable imports | client components don't read server env / service role / import server code · `components/` doesn't import from `app/`/`pages/` · warns on `dangerouslySetInnerHTML`, `@ts-ignore` |
+| `node` | other package.json | same as `react` | no string concatenation into SQL · warns on `console.log` |
 
-- `profiles/<stack>.yml` chứa tool và rule mặc định của org. Sửa ở đây là áp cho mọi repo cùng stack.
-- `profiles/starter/` chứa file mẫu cho repo con: `harness.yml`, `.rubocop.yml`, `eslint.config.mjs`, `.prettierrc.json`, `.dependency-cruiser.cjs`, và `ARCHITECTURE.md` cho từng stack (tài liệu AI reviewer dùng làm chuẩn đối chiếu).
-- Monorepo: mỗi thư mục là một profile, chạy song song (vd `api/` rails + `web/` react).
-- Thêm stack mới (Go, Python…): thêm `profiles/<tên>.yml` + một nhánh trong `scripts/harness/stack.mjs` + job trong `stack.yml`.
+- `profiles/<stack>.yml` holds the org's default tools and rules. Changes here apply to every repo on that stack.
+- `profiles/starter/` holds sample files for child repos: `harness.yml`, `.rubocop.yml`, `eslint.config.mjs`, `.prettierrc.json`, `.dependency-cruiser.cjs`, and an `ARCHITECTURE.md` per stack (the reference document the AI reviewer checks against).
+- Monorepo: each directory is a profile, run in parallel (e.g. `api/` rails + `web/` react).
+- Adding a new stack (Go, Python…): add `profiles/<name>.yml` + a branch in `scripts/harness/stack.mjs` + a job in `stack.yml`.
 
-**Chỉ chặn nợ mới.** Trên PR, ESLint/Prettier/RuboCop/rule kiến trúc chỉ xét file hoặc dòng thay đổi. Riêng `tsc` và Brakeman còn chạy thêm trên commit base (git worktree) để so sánh:
-- Lỗi đã có từ trước ở file không đổi: chỉ ghi chú, không chặn.
-- Lỗi **mới do PR gây ra** ở file không đổi thì vẫn chặn. Ví dụ đổi tên hàm export làm vỡ file gọi nó.
+**Block only new debt.** On a PR, ESLint/Prettier/RuboCop/architecture rules only look at changed files or lines. `tsc` and Brakeman additionally run on the base commit (git worktree) for comparison:
+- Pre-existing errors in unchanged files: noted only, not blocking.
+- **New errors caused by the PR** in unchanged files still block. Example: renaming an exported function breaks the files that call it.
 
-Muốn quét toàn repo thì dùng `convention.scope: all`. Run trên `main`/schedule thì quét toàn bộ và chỉ báo cáo.
+To scan the whole repo, use `convention.scope: all`. Runs on `main`/schedule scan everything and only report.
 
-### Rule kiến trúc riêng của repo
+### Repo-specific architecture rules
 
-Rule là regex chạy được với mọi ngôn ngữ: "file khớp `paths` không được chứa `forbid`".
+Rules are regexes that work for any language: "files matching `paths` must not contain `forbid`".
 
 ```yaml
 # .github/harness.yml
@@ -58,138 +58,139 @@ architecture:
     - id: web/features-isolated
       paths: ["web/src/features/**"]
       forbid: 'from\s+["'']@/features/(?!shared/)'
-      message: Feature không import nội bộ feature khác, đi qua @/features/shared.
-      severity: error            # error chặn PR, warn chỉ cảnh báo
-      # allow: '...'             # dòng khớp allow thì bỏ qua
-      # if_file_matches: '...'   # chỉ áp cho file có nội dung khớp (vd "use client")
+      message: Features must not import another feature's internals; go through @/features/shared.
+      severity: error            # error blocks the PR, warn only warns
+      # allow: '...'             # lines matching allow are skipped
+      # if_file_matches: '...'   # only applies to files whose content matches (e.g. "use client")
 ```
 
-Muốn bỏ qua có chủ đích một dòng: thêm comment `harness-disable-line <rule-id>` vào dòng đó. PR có marker kiểu này (cả `eslint-disable`, `rubocop:disable`, `nosemgrep`, `@ts-ignore`…) sẽ không được bot tự approve mà phải có người duyệt.
+To intentionally skip a line, add a `harness-disable-line <rule-id>` comment to it. PRs containing such markers (including `eslint-disable`, `rubocop:disable`, `nosemgrep`, `@ts-ignore`…) are not auto-approved by the bot and need a human review.
 
-**`.github/harness.yml` luôn đọc từ commit base của PR.** Vì vậy một PR không thể tự tắt rule hay tự tăng ngưỡng approve cho chính nó. Thay đổi config chỉ có hiệu lực sau khi merge, và file nằm trong `.github/**` nên luôn cần người duyệt.
+**`.github/harness.yml` is always read from the PR's base commit.** So a PR cannot disable rules or raise the approval threshold for itself. Config changes only take effect after merge, and the file is under `.github/**`, so it always needs a human review.
 
-## Dự án có sẵn
+## Existing projects
 
-Repo cũ thì bật theo lộ trình **quan sát trước, ép sau**. Hướng dẫn chi tiết cho người và cho Claude Code ở [`docs/onboarding-existing-repo.md`](docs/onboarding-existing-repo.md).
+Existing repos are rolled out **observe first, enforce later**. Detailed instructions for humans and for Claude Code are in [`docs/onboarding-existing-repo.md`](docs/onboarding-existing-repo.md).
 
-- **`enforcement: observe`**: gate chấm và comment "nếu bật thì PR này sẽ bị chặn vì…" nhưng không chặn, không tự approve/merge. PR áp dụng harness do org-audit mở đã để sẵn chế độ này.
-- **Chỉ chặn nợ mới, ở mọi check**:
-  - ESLint, RuboCop: chạy lại trên bản base của chính các file đã sửa, chỉ chặn lỗi **không có từ trước**, kể cả lỗi mới nằm ở dòng cũ (vd xoá chỗ dùng làm biến thành unused). Sửa một dòng trong file cũ không phải dọn cả file.
-  - tsc, Brakeman: so với base, chỉ chặn lỗi mới.
-  - Prettier: file vốn chưa format từ trước chỉ cảnh báo.
-  - Trivy CVE và misconfig: so với base, đếm theo số lần. Thêm bản thứ hai của cùng lỗi vẫn bị bắt.
-  - Hadolint, compose: so với bản base của chính file đó.
-  - `vercel.json`, tên migration: chỉ file đổi/mới.
-  - Supabase Advisor: có `advisors_ignore` cho nợ đã chấp nhận.
-  - Repo mới muốn "chạm file nào sạch file đó" thì đặt `convention.granularity: file`.
-- **`scripts/harness/debt.mjs`**: chạy ở root repo cũ để đo vi phạm từng rule trên toàn repo, phát hiện file env bị commit, rồi dựng khung `harness.yml`.
-  - Rule có nhiều vi phạm cũ được đánh dấu "xem lại", vì có thể không hợp kiến trúc thực tế. Script không tự tắt hay hạ mức rule nào.
-  - Rule bảo mật (`security: true`) không tắt và không hạ mức được từ repo.
-- Ngoại lệ duy nhất chặn mọi PR từ ngày đầu: file `.env*`/`.vercel/` đang bị commit. Phải gỡ và rotate secret.
+- **`enforcement: observe`**: the gate grades and comments "if enforced, this PR would be blocked because…" but does not block or auto-approve/merge. Harness adoption PRs opened by org-audit already set this mode.
+- **Block only new debt, in every check**:
+  - ESLint, RuboCop: re-run on the base version of the changed files themselves and only block errors that **did not exist before**, including new errors on old lines (e.g. removing a usage makes a variable unused). Editing one line in an old file does not require cleaning up the whole file.
+  - tsc, Brakeman: compared with base, only new errors block.
+  - Prettier: files that were already unformatted only warn.
+  - Trivy CVE and misconfig: compared with base, counted by occurrence. Adding a second instance of the same issue is still caught.
+  - Hadolint, compose: compared with the base version of the same file.
+  - `vercel.json`, migration names: changed/new files only.
+  - Supabase Advisor: `advisors_ignore` for accepted debt.
+  - New repos that want "touch a file, clean the file" can set `convention.granularity: file`.
+- **`scripts/harness/debt.mjs`**: run at the root of an existing repo to count violations per rule across the whole repo, detect committed env files, and scaffold a `harness.yml`.
+  - Rules with many existing violations are flagged "review", since they may not fit the actual architecture. The script never disables or downgrades a rule on its own.
+  - Security rules (`security: true`) cannot be disabled or downgraded from the repo.
+- The only exception that blocks every PR from day one: committed `.env*`/`.vercel/` files. They must be removed and the secrets rotated.
 
 ## Gate: reject, approve, merge
 
-| Tình huống | Gate | Hành động |
+| Situation | Gate | Action |
 |---|---|---|
-| Có job fail | ❌ | Sticky comment liệt kê job, `file:dòng` và lỗi (lấy từ annotation của run) + link log |
-| Repo ở `enforcement: observe` | 👀 | Comment "nếu bật thì sẽ chặn vì…", check luôn xanh, không approve/merge |
-| PR vào nhánh ngoài `gate.branches` (mặc định chỉ default branch; git-flow đặt `[develop]`) | ⏭️ | `harness / gate` và `org / pr-convention` xanh, chỉ ghi summary, không comment/approve/merge |
-| AI review có vấn đề `critical`/`major` | ❌ | Comment inline đúng dòng + tóm tắt trong sticky comment |
-| Đạt, ≤ `max_lines` (mặc định 200), không đụng `human_required_paths`, đúng `authors` | ✅ | Bot **approve** + bật **auto-merge** |
-| Đạt nhưng đụng migration, `.github/`, auth, Dockerfile, manifest/lockfile, config của linter, hoặc thêm marker tắt kiểm tra | ✅ | Bật auto-merge, ghi "cần người review". Merge ngay khi có người approve |
-| Draft | ✅/❌ | Chỉ comment, không approve/merge |
-| PR từ fork | ✅/❌ | Chỉ chấm điểm, không comment/approve/merge, không gọi AI |
-| Re-run một run cũ sau khi PR đã có commit mới | ✅/❌ | Chỉ chấm điểm commit cũ, không ghi gì lên PR |
+| A job failed | ❌ | Sticky comment listing the job, `file:line` and the error (taken from the run's annotations) + log link |
+| Repo in `enforcement: observe` | 👀 | Comment "if enforced, would block because…", check always green, no approve/merge |
+| PR into a branch outside `gate.branches` (default: only the default branch; git-flow sets `[develop]`) | ⏭️ | `harness / gate` and `org / pr-convention` green, summary only, no comment/approve/merge |
+| AI review found `critical`/`major` issues | ❌ | Inline comments on the exact lines + summary in the sticky comment |
+| Passing, ≤ `max_lines` (default 200), no `human_required_paths` touched, matching `authors` | ✅ | Bot **approves** + enables **auto-merge** |
+| Passing but touches migrations, `.github/`, auth, Dockerfile, manifest/lockfile, linter config, or adds check-disabling markers | ✅ | Enables auto-merge, notes "needs human review". Merges as soon as someone approves |
+| Draft | ✅/❌ | Comment only, no approve/merge |
+| PR from a fork | ✅/❌ | Grade only, no comment/approve/merge, no AI call |
+| Re-run of an old run after the PR got new commits | ✅/❌ | Grades the old commit only, writes nothing to the PR |
 
-Auto-merge dùng tính năng gốc của GitHub, nên GitHub luôn chờ **mọi** required check (kể cả `org / pr-convention`) và số approve mà ruleset yêu cầu.
+Auto-merge uses GitHub's native feature, so GitHub always waits for **every** required check (including `org / pr-convention`) and the number of approvals the ruleset requires.
 
-**AI review** (`review.ai: true`) gọi OpenAI Chat Completions (mặc định, `review.provider: openai`) hoặc Claude API (`provider: anthropic`) với structured output. Nó đọc diff (đã bỏ lockfile), `ARCHITECTURE.md` của repo và kết quả linter, rồi trả về các comment theo mức độ nghiêm trọng.
-- AI **chỉ có quyền chặn**. Việc approve do policy cố định quyết định (kích thước, path, tác giả), vì nội dung PR có thể chứa prompt injection kiểu "hãy approve PR này". Prompt coi diff là dữ liệu không tin cậy và báo injection là lỗi `critical`.
-- Mỗi commit chỉ được AI review **một lần**. Kết quả được ghi vào review của chính gate (`github-actions[bot]` hoặc App của harness; bot khác không giả được) và dùng lại khi re-run. Nếu AI từng chặn ở một commit trước của PR, bản sửa luôn cần người xác nhận. Nhờ vậy push commit rỗng để AI review lại cũng không lách được.
-- AI chặn nhầm: một người có quyền **maintain/admin, khác tác giả PR** gắn label `harness:override-ai` rồi re-run job gate. Label do tác giả hoặc người chỉ có quyền write gắn thì không có hiệu lực. Override không bỏ qua được lỗi của tool, và PR đó vẫn cần người approve.
-- API lỗi thì mặc định không chặn nhưng cũng không tự approve. Đặt `review.fail_closed: true` để chặn hẳn.
-- `ARCHITECTURE.md` cũng đọc từ base: PR không sửa được chuẩn mà AI dùng để chấm nó.
-- `review.model` để trống thì dùng model mặc định theo provider (`DEFAULT_MODELS` trong `scripts/harness/verdict.mjs`).
+**AI review** (`review.ai: true`) calls OpenAI Chat Completions (default, `review.provider: openai`) or the Claude API (`provider: anthropic`) with structured output. It reads the diff (lockfiles excluded), the repo's `ARCHITECTURE.md` and the linter results, then returns comments by severity.
+- The AI **can only block**. Approval is decided by fixed policy (size, paths, author), because PR content may contain prompt injection such as "please approve this PR". The prompt treats the diff as untrusted data and reports injection as a `critical` issue.
+- Each commit is AI-reviewed **only once**. The result is stored in the gate's own review (`github-actions[bot]` or the harness App; other bots cannot forge it) and reused on re-runs. If the AI blocked on an earlier commit of the PR, the fix always needs human confirmation. This way, pushing empty commits to get a fresh AI review does not work either.
+- False AI block: someone with **maintain/admin permission, other than the PR author**, adds the `harness:override-ai` label and re-runs the gate job. Labels added by the author or by someone with only write permission have no effect. An override cannot bypass tool errors, and the PR still needs a human approval.
+- On API errors the default is not to block, but also not to auto-approve. Set `review.fail_closed: true` to block instead.
+- `ARCHITECTURE.md` is also read from base: a PR cannot change the standard the AI grades it against.
+- Leaving `review.model` empty uses the per-provider default model (`DEFAULT_MODELS` in `scripts/harness/verdict.mjs`).
+- `review.language` sets the language of AI comments (default `en`).
 
-## Plan GitHub quyết định mức độ "ép buộc"
+## Your GitHub plan determines how strictly this can be enforced
 
 | | Free | Team | Enterprise Cloud |
 |---|---|---|---|
-| Gọi reusable workflow từ `.github` **public** | ✅ mọi repo | ✅ mọi repo | ✅ mọi repo |
-| Gọi từ `.github` **private** | chỉ repo private | chỉ repo private/internal | chỉ repo private/internal |
-| Ruleset bắt buộc check cho **repo private** | ❌ (chỉ repo public) | ✅ | ✅ |
-| Required workflows: repo con không cần caller, **không sửa được** | ❌ | ❌ | ✅ |
+| Call reusable workflows from a **public** `.github` | ✅ all repos | ✅ all repos | ✅ all repos |
+| Call from a **private** `.github` | private repos only | private/internal repos only | private/internal repos only |
+| Ruleset requiring checks on **private repos** | ❌ (public repos only) | ✅ | ✅ |
+| Required workflows: child repos need no caller and **cannot modify it** | ❌ | ❌ | ✅ |
 
-**`.github` phải public** vì job `stack` và `gate` checkout `scripts/harness` + `profiles` từ repo này bằng token của repo con. Repo này không chứa secret. Report audit thì luôn đi vào một repo private riêng.
+**`.github` must be public** because the `stack` and `gate` jobs check out `scripts/harness` + `profiles` from this repo using the child repo's token. This repo contains no secrets. Audit reports always go to a separate private repo.
 
-Với Team, caller nằm trong repo con nên dev có thể sửa nó trong PR để né check. Có các lớp chặn sau:
-- `CODEOWNERS` phủ `/.github/workflows/`, kèm `require_code_owner_review` trong ruleset.
-- `harness.yml` và `ARCHITECTURE.md` đọc từ base. `.github/**` và `CODEOWNERS` luôn cần người duyệt, config không bỏ được (kể cả khi đổi tên/move file).
-- org-audit so caller với template, kiểm tra CODEOWNERS có phủ cả caller lẫn `harness.yml` không, và báo khi `harness.yml` nới lỏng (tắt rule/tool, tăng ngưỡng tự approve…).
-- Gate không chỉ tin input `results` mà tự hỏi lại API trạng thái mọi job trong run. Review/comment do người thường chèn marker giả không được tính.
-- Check chỉ mang tên `harness / gate` khi chạy từ PR/merge queue. Run từ push/schedule/"Run workflow" thành `harness / gate (push)`…
+On Team, the caller lives in the child repo, so a developer could edit it in a PR to dodge checks. The following layers guard against that:
+- `CODEOWNERS` covering `/.github/workflows/`, plus `require_code_owner_review` in the ruleset.
+- `harness.yml` and `ARCHITECTURE.md` are read from base. `.github/**` and `CODEOWNERS` always need a human review, and config cannot turn that off (including on rename/move).
+- org-audit compares callers with the templates, checks that CODEOWNERS covers both the callers and `harness.yml`, and reports when `harness.yml` is loosened (rules/tools disabled, auto-approve threshold raised…).
+- The gate does not trust the `results` input alone; it queries the API itself for the status of every job in the run. Reviews/comments with fake markers inserted by regular users are ignored.
+- The check is only named `harness / gate` when run from a PR/merge queue. Runs from push/schedule/"Run workflow" become `harness / gate (push)`…
 
-Chỉ Enterprise mới khoá hoàn toàn được, bằng `required-*.yml` + `rulesets/org-baseline-enterprise.json`.
+Only Enterprise can lock this down completely, using `required-*.yml` + `rulesets/org-baseline-enterprise.json`.
 
-## Cài đặt
+## Setup
 
-1. **Tạo repo `Blended-Asia/.github` (public)**, push nội dung này lên rồi chạy:
+1. **Create the `Blended-Asia/.github` repo (public)**, push this content, then run:
    ```bash
-   ./scripts/init.sh <ten-org>        # thay Blended-Asia ở mọi file
+   ./scripts/init.sh <org-name>        # replace Blended-Asia in every file
    git commit -am "chore: init" && git push
    git tag v1 && git push origin v1
    ```
-2. **Org secrets/variables** cho harness:
-   - `OPENAI_API_KEY` (secret, nếu dùng AI review; hoặc `ANTHROPIC_API_KEY` khi `review.provider: anthropic`).
-   - **GitHub App "harness bot"** (khuyên dùng), quyền Contents R/W + Pull requests R/W, cài cho mọi repo. Lưu variable `HARNESS_APP_CLIENT_ID` và secret `HARNESS_APP_PRIVATE_KEY`.
-     - Lý do: merge do GITHUB_TOKEN thực hiện **không kích hoạt workflow** trên `main`. Vercel/Supabase integration không bị ảnh hưởng, nhưng các deploy bằng GitHub Actions thì bị.
-     - Không có App thì harness dùng GITHUB_TOKEN. Muốn bot approve được, phải bật Org settings → Actions → "Allow GitHub Actions to create and approve pull requests".
-3. **Từng repo**: Settings → General → bật **Allow auto-merge**. Repo nào chưa bật, comment của gate sẽ nhắc.
-4. **GitHub App cho org-audit**: có thể dùng chung App ở bước 2 nếu thêm đủ quyền. Cần Administration *Read*, Contents *R/W*, Deployments *Read*, Issues *R/W*, Metadata *Read*, Pull requests *R/W*, Workflows *R/W*.
-   - Trong repo `.github`: variable `ORG_AUDIT_APP_CLIENT_ID`, secret `ORG_AUDIT_APP_PRIVATE_KEY`.
-   - Variable `AUDIT_REPORT_REPO` là một repo **private** nhận report. Repo `.github` public nên script tự chạy quiet: không in tên repo ra log.
-   - Tuỳ chọn: `PLATFORM_OWNERS=@Blended-Asia/platform`, `HARNESS_REF` (mặc định `v1`).
+2. **Org secrets/variables** for the harness:
+   - `OPENAI_API_KEY` (secret, if using AI review; or `ANTHROPIC_API_KEY` with `review.provider: anthropic`).
+   - **GitHub App "harness bot"** (recommended), permissions Contents R/W + Pull requests R/W, installed on all repos. Store variable `HARNESS_APP_CLIENT_ID` and secret `HARNESS_APP_PRIVATE_KEY`.
+     - Why: merges performed with GITHUB_TOKEN **do not trigger workflows** on `main`. Vercel/Supabase integrations are unaffected, but deploys via GitHub Actions are.
+     - Without an App, the harness uses GITHUB_TOKEN. For the bot to approve, enable Org settings → Actions → "Allow GitHub Actions to create and approve pull requests".
+3. **Each repo**: Settings → General → enable **Allow auto-merge**. For repos where it is off, the gate comment will remind you.
+4. **GitHub App for org-audit**: you can reuse the App from step 2 if you add the needed permissions: Administration *Read*, Contents *R/W*, Deployments *Read*, Issues *R/W*, Metadata *Read*, Pull requests *R/W*, Workflows *R/W*.
+   - In the `.github` repo: variable `ORG_AUDIT_APP_CLIENT_ID`, secret `ORG_AUDIT_APP_PRIVATE_KEY`.
+   - Variable `AUDIT_REPORT_REPO` is a **private** repo that receives the reports. Since the `.github` repo is public, the script runs in quiet mode automatically: no repo names in logs.
+   - Optional: `PLATFORM_OWNERS=@Blended-Asia/platform`, `HARNESS_REF` (default `v1`).
 5. **Rollout**:
-   - Chạy org-audit dry-run để xem report.
-   - Chạy `fix=true` để mở PR `ci: adopt org harness (v1)` vào từng repo. PR thêm `org-harness.yml`, `org-pr-convention.yml`, `harness.yml`, PR template, CODEOWNERS.
-   - Merge từng PR. Copy file starter (`.rubocop.yml`, `eslint.config.mjs`…) cho repo nào gate báo thiếu.
-6. **Bật ruleset** *sau khi* các repo đã có caller. Bật trước thì PR sẽ kẹt ở "Expected — Waiting for status".
-   Ruleset chia theo nhóm repo (mỗi repo chỉ thuộc **một** nhóm, không bật kèm `org-baseline`):
+   - Run org-audit as a dry run to see the report.
+   - Run with `fix=true` to open a `ci: adopt org harness (v1)` PR in each repo. The PR adds `org-harness.yml`, `org-pr-convention.yml`, `harness.yml`, a PR template and CODEOWNERS.
+   - Merge each PR. Copy starter files (`.rubocop.yml`, `eslint.config.mjs`…) into any repo where the gate reports them missing.
+6. **Enable rulesets** *after* repos have their callers. Enabling earlier leaves PRs stuck at "Expected — Waiting for status".
+   Rulesets are split by repo group (each repo belongs to **one** group only; do not combine with `org-baseline`):
 
-   | Ruleset | Nhánh được bảo vệ | Approve |
+   | Ruleset | Protected branch | Approvals |
    |---|---|---|
    | `org-trunk-team` | default branch | 1 + code owner |
    | `org-trunk-solo` | default branch | 0 |
    | `org-gitflow-team` | `develop` | 1 + code owner |
    | `org-gitflow-solo` | `develop` | 0 |
 
-   Repo git-flow phải đặt `gate.branches: [develop]` trong `harness.yml`. Merge cho phép `squash` + `merge`.
+   Git-flow repos must set `gate.branches: [develop]` in `harness.yml`. Allowed merge methods: `squash` + `merge`.
    ```bash
    REPOS=web,api ./scripts/apply-ruleset.sh <org> trunk-team active
    REPOS=jfoodhub-workspace ./scripts/apply-ruleset.sh <org> gitflow-team active
-   DRY_RUN=true REPOS=x ./scripts/apply-ruleset.sh <org> gitflow-solo   # chỉ in JSON
-   ./scripts/apply-ruleset.sh <org> team active                        # cũ: org-baseline phủ ~ALL (SOLO=true: không bắt approve)
-   ./scripts/apply-ruleset.sh <org> enterprise evaluate                # Enterprise: chạy thử trước
+   DRY_RUN=true REPOS=x ./scripts/apply-ruleset.sh <org> gitflow-solo   # only print JSON
+   ./scripts/apply-ruleset.sh <org> team active                        # legacy: org-baseline covering ~ALL (SOLO=true: no approval required)
+   ./scripts/apply-ruleset.sh <org> enterprise evaluate                # Enterprise: trial run first
    ```
-   `REPOS` ghi đè danh sách repo của ruleset (lần sau phải truyền đủ cả danh sách). Sau PR đầu tiên, kiểm tra tên check thực tế trên PR có đúng `org / pr-convention` và `harness / gate` không, khác thì sửa `context` trong `rulesets/*.json`. `integration_id: 15368` là GitHub Actions, dùng để chặn ai đó giả status bằng API.
-7. **Vercel preview** có Deployment Protection: tạo *Protection Bypass for Automation*, lưu thành org secret `VERCEL_AUTOMATION_BYPASS_SECRET`.
+   `REPOS` overwrites the ruleset's repo list (pass the full list every time). After the first PR, check that the actual check names on the PR are `org / pr-convention` and `harness / gate`; if not, fix `context` in `rulesets/*.json`. `integration_id: 15368` is GitHub Actions, used to stop anyone from faking statuses via the API.
+7. **Vercel preview** with Deployment Protection: create a *Protection Bypass for Automation* and store it as the org secret `VERCEL_AUTOMATION_BYPASS_SECRET`.
 
-Bỏ qua finding đã chấp nhận rủi ro: `.trivyignore`, `// nosemgrep`, `.hadolint.yaml`, `config/brakeman.ignore`, `harness-disable-line`. Repo có migration nên bật thêm "Require branches to be up to date" để check thứ tự timestamp luôn so với base mới nhất.
+Skipping findings whose risk has been accepted: `.trivyignore`, `// nosemgrep`, `.hadolint.yaml`, `config/brakeman.ignore`, `harness-disable-line`. Repos with migrations should also enable "Require branches to be up to date" so the timestamp-order check always compares against the latest base.
 
-## Phát hành thay đổi
+## Releasing changes
 
-PR vào repo này → `self-test` (actionlint + test offline) → merge → dời tag:
+PR into this repo → `self-test` (actionlint + offline tests) → merge → move the tag:
 ```bash
-git tag -f v1 && git push -f origin v1     # thay đổi tương thích
+git tag -f v1 && git push -f origin v1     # compatible change
 ```
-Khi có breaking change:
-1. Đổi default `harness_ref` trong `stack.yml` và `harness.yml` thành `v2`, rồi tag `v2`.
-2. Đặt variable `HARNESS_REF=v2` và chạy org-audit với `fix=true`. Audit sẽ mở PR bump ref và giữ nguyên config của từng repo.
+For a breaking change:
+1. Change the default `harness_ref` in `stack.yml` and `harness.yml` to `v2`, then tag `v2`.
+2. Set the variable `HARNESS_REF=v2` and run org-audit with `fix=true`. The audit opens ref-bump PRs and keeps each repo's config intact.
 
-Chạy test local: `node --test 'tests/*.test.mjs'` (Node ≥ 22, cần `git`, `ruby`, `python3`, `docker compose`).
+Run tests locally: `node --test 'tests/*.test.mjs'` (Node ≥ 22, requires `git`, `ruby`, `python3`, `docker compose`).
 
-## Chưa làm
+## Not done yet
 
-- Profile Go/Python/PHP: khung đã sẵn, thêm theo mục "Thêm stack mới".
-- Deploy: Vercel/Supabase vẫn deploy qua integration. Có thể thêm `supabase db push` trên `main` sau khi gate xanh.
-- Build và quét image Docker (`trivy image`), test coverage, chạy test suite của repo. Harness hiện không chạy `rspec`/`vitest` của repo vì mỗi repo cần DB/service khác nhau. Nên để CI test riêng của repo làm required check thứ ba.
+- Go/Python/PHP profiles: the scaffolding is ready; add them following "Adding a new stack".
+- Deploy: Vercel/Supabase still deploy via their integrations. `supabase db push` on `main` after a green gate could be added.
+- Building and scanning Docker images (`trivy image`), test coverage, running the repo's test suite. The harness does not run the repo's `rspec`/`vitest` because each repo needs different DBs/services. Let the repo's own test CI be the third required check.

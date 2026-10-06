@@ -1,43 +1,43 @@
-# Reusable: kiểm tra PR theo convention của org.
-# Gọi từ repo con qua workflow-templates/org-pr-convention.yml
-# Check name hiện trên PR: "org / pr-convention"
+# Reusable: checks PRs against the org convention.
+# Called from child repos via workflow-templates/org-pr-convention.yml
+# Check name shown on the PR: "org / pr-convention"
 name: pr-convention
 
 on:
   workflow_call:
     inputs:
       title_types:
-        description: Các type Conventional Commits được phép (phân cách bằng dấu phẩy)
+        description: Allowed Conventional Commits types (comma-separated)
         type: string
         default: feat,fix,chore,docs,refactor,perf,test,build,ci,revert,style
       require_scope:
         type: boolean
         default: false
       allowed_scopes:
-        description: Danh sách scope hợp lệ, để trống = scope nào cũng được
+        description: Allowed scopes; empty = any scope
         type: string
         default: ""
       title_max_length:
         type: number
         default: 72
       branch_pattern:
-        description: Regex cho tên branch nguồn, để trống = không kiểm tra
+        description: Regex for the source branch name; empty = not checked
         type: string
         default: '^(feat|fix|chore|docs|refactor|perf|test|build|ci|hotfix|release|revert)/[a-z0-9._-]+$'
       ticket_pattern:
-        description: "Regex mã ticket (vd Backlog/Jira: '[A-Z][A-Z0-9_]+-[0-9]+'), để trống = không bắt buộc"
+        description: "Ticket ID regex (e.g. Backlog/Jira: '[A-Z][A-Z0-9_]+-[0-9]+'); empty = not required"
         type: string
         default: ""
       ticket_in:
-        description: Tìm mã ticket ở đâu (title, branch, body)
+        description: Where to look for the ticket ID (title, branch, body)
         type: string
         default: title,branch,body
       required_sections:
-        description: Các heading bắt buộc có nội dung trong PR body (phân cách bằng dấu phẩy hoặc xuống dòng)
+        description: Headings that must exist with content in the PR body (comma- or newline-separated)
         type: string
         default: "## Summary,## How to test"
       require_checklist_done:
-        description: Fail nếu body còn checkbox "- [ ]" chưa tick
+        description: Fail if the body still has unticked "- [ ]" checkboxes
         type: boolean
         default: false
       max_changed_lines:
@@ -48,26 +48,26 @@ on:
         type: string
         default: warn
       size_exclude:
-        description: Glob các file không tính vào kích thước PR
+        description: Globs of files excluded from the PR size
         type: string
         default: "package-lock.json,pnpm-lock.yaml,yarn.lock,bun.lock,bun.lockb,*.snap,*.min.js,**/generated/**,**/database.types.ts"
       size_labels:
-        description: Tự gắn label size/XS..XL
+        description: Automatically apply size/XS..XL labels
         type: boolean
         default: true
       check_commits:
-        description: Kiểm tra từng commit message (thường không cần nếu merge kiểu squash)
+        description: Check every commit message (usually unnecessary with squash merges)
         type: boolean
         default: false
       ignore_bots:
         type: boolean
         default: true
       comment:
-        description: Ghi sticky comment tóm tắt lỗi lên PR
+        description: Post a sticky comment summarizing problems on the PR
         type: boolean
         default: true
       config_path:
-        description: File cấu hình harness của repo (đọc gate.branches ở commit base)
+        description: The repo's harness config file (gate.branches is read at the base commit)
         type: string
         default: .github/harness.yml
 
@@ -80,8 +80,8 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      # gate.branches đọc từ harness.yml ở commit BASE (PR không tự đổi được nhánh nào bị gate)
-      - name: Nhánh được gate
+      # gate.branches is read from harness.yml at the BASE commit (a PR cannot change which branches are gated)
+      - name: Gated branches
         id: gate
         if: github.event.pull_request
         env:
@@ -92,7 +92,7 @@ jobs:
         run: |
           # ---- gate-branches:begin ----
           raw=$(gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/$CONFIG_PATH?ref=$BASE_SHA" 2>/dev/null || true)
-          # shellcheck disable=SC2016 # $stdin là của Ruby, không phải biến shell
+          # shellcheck disable=SC2016 # $stdin belongs to Ruby, not a shell variable
           branches=$(printf '%s' "$raw" | ruby -ryaml -rjson -e '
             c = (YAML.safe_load($stdin.read) rescue nil)
             b = c.is_a?(Hash) && c["gate"].is_a?(Hash) ? c["gate"]["branches"] : nil
@@ -110,32 +110,33 @@ jobs:
           script: |
             // ---- org-pr-convention:begin ----
             if (!context.payload.pull_request) {
-              core.info(`Event ${context.eventName}: không có PR payload, convention đã được kiểm tra lúc mở PR.`);
+              core.info(`Event ${context.eventName}: no PR payload; the convention was already checked on the PR.`);
               return;
             }
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            // Luôn đọc trạng thái PR hiện tại: re-run một run cũ (payload cũ) không thể "xanh hoá" PR đã bị sửa sai
+            // Always read the current PR state: re-running an old run (stale payload) cannot turn a since-broken PR green
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: context.payload.pull_request.number });
-            // Chỉ gate PR vào nhánh trong gate.branches (mặc định: default branch). Nhánh khác → bỏ qua, không comment.
+            // Only gate PRs into branches in gate.branches (default: the default branch). Other branches → skip, no comment.
             const gateBranches = JSON.parse(process.env.GATE_BRANCHES || '[]');
             const defaultBranch = context.payload.repository?.default_branch;
             const allowed = gateBranches.length ? gateBranches : (defaultBranch ? [defaultBranch] : []);
             const branchRe = (g) => new RegExp(`^${g.split('**').map((a) => a.split('*').map((b) => b.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')).join('.*')}$`);
             if (allowed.length && pr.base?.ref && !allowed.some((g) => branchRe(g).test(pr.base.ref))) {
-              core.info(`Base \`${pr.base.ref}\` không nằm trong gate.branches (${allowed.join(', ')}): bỏ qua convention.`);
-              await core.summary.addRaw(`### org / pr-convention: bỏ qua — base \`${pr.base.ref}\` không được gate (${allowed.join(', ')})\n`).write();
+              core.info(`Base \`${pr.base.ref}\` is not in gate.branches (${allowed.join(', ')}): skipping the convention check.`);
+              await core.summary.addRaw(`### org / pr-convention: skipped — base \`${pr.base.ref}\` is not gated (${allowed.join(', ')})\n`).write();
               return;
             }
             const I = JSON.parse(process.env.INPUTS);
             const MARKER = '<!-- org-pr-convention -->';
             const list = (s) => String(s ?? '').split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
+            const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
             const errors = [];
             const warnings = [];
 
             const isBot = pr.user?.type === 'Bot' || /\[bot\]$/.test(pr.user?.login ?? '');
             if (I.ignore_bots && isBot) {
-              core.info(`PR của bot (${pr.user.login}), bỏ qua convention.`);
+              core.info(`Bot PR (${pr.user.login}), skipping the convention check.`);
               return;
             }
 
@@ -144,21 +145,21 @@ jobs:
             const title = pr.title.trim();
             const m = title.match(/^([a-z]+)(?:\(([^()\s]+)\))?(!)?: (\S.*)$/);
             if (!m) {
-              errors.push(['Title', `\`${title}\` không đúng dạng \`type(scope): mô tả\`. Type hợp lệ: ${types.join(', ')}`]);
+              errors.push(['Title', `\`${title}\` does not match \`type(scope): description\`. Valid types: ${types.join(', ')}`]);
             } else {
               const [, type, scope, , subject] = m;
-              if (!types.includes(type)) errors.push(['Title', `type \`${type}\` không hợp lệ. Dùng một trong: ${types.join(', ')}`]);
-              if (I.require_scope && !scope) errors.push(['Title', 'thiếu scope, vd `feat(auth): ...`']);
+              if (!types.includes(type)) errors.push(['Title', `type \`${type}\` is not allowed. Use one of: ${types.join(', ')}`]);
+              if (I.require_scope && !scope) errors.push(['Title', 'missing scope, e.g. `feat(auth): ...`']);
               const scopes = list(I.allowed_scopes);
-              if (scope && scopes.length && !scopes.includes(scope)) errors.push(['Title', `scope \`${scope}\` không nằm trong: ${scopes.join(', ')}`]);
-              if (/[.。]$/.test(subject)) warnings.push(['Title', 'không nên kết thúc bằng dấu chấm']);
+              if (scope && scopes.length && !scopes.includes(scope)) errors.push(['Title', `scope \`${scope}\` is not one of: ${scopes.join(', ')}`]);
+              if (/[.。]$/.test(subject)) warnings.push(['Title', 'should not end with a period']);
             }
-            if (title.length > I.title_max_length) errors.push(['Title', `dài ${title.length} ký tự (tối đa ${I.title_max_length})`]);
+            if (title.length > I.title_max_length) errors.push(['Title', `is ${title.length} characters long (max ${I.title_max_length})`]);
 
             // 2) Branch name
             const branch = pr.head.ref;
             if (I.branch_pattern && !new RegExp(I.branch_pattern).test(branch)) {
-              errors.push(['Branch', `\`${branch}\` không khớp \`${I.branch_pattern}\``]);
+              errors.push(['Branch', `\`${branch}\` does not match \`${I.branch_pattern}\``]);
             }
 
             // 3) Body sections + checklist
@@ -176,11 +177,11 @@ jobs:
             };
             for (const sec of list(I.required_sections)) {
               const c = sectionContent(body, sec);
-              if (c === null) errors.push(['Body', `thiếu section \`${sec}\``]);
-              else if (!c) errors.push(['Body', `section \`${sec}\` đang trống (ghi "N/A" nếu không áp dụng)`]);
+              if (c === null) errors.push(['Body', `missing section \`${sec}\``]);
+              else if (!c) errors.push(['Body', `section \`${sec}\` is empty (write "N/A" if not applicable)`]);
             }
             if (I.require_checklist_done && /^\s*[-*] \[ \]/m.test(body)) {
-              errors.push(['Checklist', 'còn mục `- [ ]` chưa tick']);
+              errors.push(['Checklist', 'has unticked `- [ ]` items']);
             }
 
             // 4) Ticket
@@ -189,11 +190,11 @@ jobs:
               const hay = { title, branch, body };
               const where = list(I.ticket_in);
               if (!where.some((w) => re.test(hay[w] ?? ''))) {
-                errors.push(['Ticket', `không tìm thấy mã ticket khớp \`${I.ticket_pattern}\` trong ${where.join('/')}`]);
+                errors.push(['Ticket', `no ticket ID matching \`${I.ticket_pattern}\` found in ${where.join('/')}`]);
               }
             }
 
-            // 5) Size (bỏ qua lockfile, file generate)
+            // 5) Size (ignores lockfiles and generated files)
             const globToRe = (g) => {
               const anchored = g.includes('/');
               let s = g.replace(/[.+^${}()|[\]\\]/g, '\\$&')
@@ -211,33 +212,33 @@ jobs:
                 changed = files.filter((f) => !excludes.some((re) => re.test(f.filename)))
                   .reduce((n, f) => n + f.additions + f.deletions, 0);
               } catch (e) {
-                core.warning(`Không lấy được danh sách file, dùng tổng additions+deletions: ${e.message}`);
+                core.warning(`Could not list files, using total additions+deletions: ${e.message}`);
               }
               if (I.size_mode !== 'off' && changed > I.max_changed_lines) {
-                const item = ['Size', `${changed} dòng thay đổi (ngưỡng ${I.max_changed_lines}). Nên tách PR nhỏ hơn`];
+                const item = ['Size', `${changed} lines changed (limit ${I.max_changed_lines}). Consider splitting the PR`];
                 (I.size_mode === 'fail' ? errors : warnings).push(item);
               }
             }
 
-            // 6) Commit messages (tuỳ chọn)
+            // 6) Commit messages (optional)
             if (I.check_commits) {
               const commits = await github.paginate(github.rest.pulls.listCommits, { owner, repo, pull_number: pr.number, per_page: 100 });
               const re = new RegExp(`^(${types.join('|')})(\\([^()\\s]+\\))?!?: \\S`);
               const bad = commits.map((c) => c.commit.message.split('\n')[0])
                 .filter((msg) => !re.test(msg) && !/^(Merge|Revert) /.test(msg));
-              if (bad.length) errors.push(['Commits', `${bad.length} commit sai format, vd: \`${bad[0]}\``]);
+              if (bad.length) errors.push(['Commits', `${count(bad.length, 'commit')} with a bad format, e.g. \`${bad[0]}\``]);
             }
 
-            // ---- Báo cáo ----
+            // ---- Report ----
             const draft = pr.draft === true;
             const ok = errors.length === 0;
             const rows = [...errors.map(([k, v]) => `| ❌ | ${k} | ${v} |`), ...warnings.map(([k, v]) => `| ⚠️ | ${k} | ${v} |`)];
             const head = ok
-              ? (warnings.length ? `### ✅ PR convention: đạt (${warnings.length} cảnh báo)` : '### ✅ PR convention: đạt')
-              : `### ❌ PR convention: ${errors.length} lỗi${warnings.length ? `, ${warnings.length} cảnh báo` : ''}`;
-            const note = draft && !ok ? '\n\n> PR đang ở chế độ draft: chưa chặn, sẽ bắt buộc khi chuyển sang Ready for review.' : '';
-            const table = rows.length ? `\n\n| | Mục | Chi tiết |\n|---|---|---|\n${rows.join('\n')}` : '';
-            const md = `${MARKER}\n${head}${table}${note}\n\n<sub>Convention của org · sửa title/body là check tự chạy lại.</sub>`;
+              ? (warnings.length ? `### ✅ PR convention: passed (${count(warnings.length, 'warning')})` : '### ✅ PR convention: passed')
+              : `### ❌ PR convention: ${count(errors.length, 'error')}${warnings.length ? `, ${count(warnings.length, 'warning')}` : ''}`;
+            const note = draft && !ok ? '\n\n> This PR is a draft: not blocking yet; it will be enforced once marked Ready for review.' : '';
+            const table = rows.length ? `\n\n| | Check | Details |\n|---|---|---|\n${rows.join('\n')}` : '';
+            const md = `${MARKER}\n${head}${table}${note}\n\n<sub>Org convention · editing the title/body re-runs this check automatically.</sub>`;
             await core.summary.addRaw(md.replace(MARKER, '')).write();
 
             if (I.size_labels) {
@@ -250,7 +251,7 @@ jobs:
                 }
                 if (!current.includes(want)) await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [want] });
               } catch (e) {
-                core.info(`Bỏ qua gắn label (token không có quyền ghi, vd PR từ fork): ${e.message}`);
+                core.info(`Skipping labels (token lacks write access, e.g. a fork PR): ${e.message}`);
               }
             }
 
@@ -261,13 +262,13 @@ jobs:
                 if (prev && prev.body !== md) await github.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body: md });
                 else if (!prev && rows.length) await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body: md });
               } catch (e) {
-                core.info(`Bỏ qua comment (token không có quyền ghi): ${e.message}`);
+                core.info(`Skipping comment (token lacks write access): ${e.message}`);
               }
             }
 
             for (const [k, v] of warnings) core.warning(`${k}: ${v}`);
             if (!ok) {
               for (const [k, v] of errors) (draft ? core.warning : core.error)(`${k}: ${v}`);
-              if (!draft) core.setFailed(`PR chưa đạt convention (${errors.length} lỗi)`);
+              if (!draft) core.setFailed(`PR does not meet the convention (${count(errors.length, 'error')})`);
             }
             // ---- org-pr-convention:end ----

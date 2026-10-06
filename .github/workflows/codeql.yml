@@ -1,12 +1,12 @@
-# Reusable (opt-in): CodeQL. Miễn phí cho repo public; repo private cần GitHub Code Security.
-# Tách riêng vì cần quyền security-events: write (caller phải cấp quyền này).
+# Reusable (opt-in): CodeQL. Free for public repos; private repos need GitHub Code Security.
+# Kept separate because it needs the security-events: write permission (the caller must grant it).
 name: codeql
 
 on:
   workflow_call:
     inputs:
       languages:
-        description: 'Mảng JSON, vd: ["javascript-typescript","python","actions"]'
+        description: 'JSON array, e.g. ["javascript-typescript","python","actions"]'
         type: string
         default: '["javascript-typescript","actions"]'
 

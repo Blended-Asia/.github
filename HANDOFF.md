@@ -1,150 +1,150 @@
-# HANDOFF — đưa harness lên org thật
+# HANDOFF — rolling the harness out to the real org
 
-Người nhận: Claude Code, chạy trên máy có `gh` đã đăng nhập vào org. Đọc `CLAUDE.md` trước.
+Recipient: Claude Code, running on a machine where `gh` is logged in to the org. Read `CLAUDE.md` first.
 
-## Trạng thái hiện tại (2026-10-03)
+## Current status (2026-10-03)
 
-**Xong và đã kiểm chứng offline:**
-- Toàn bộ workflow, script, profile và starter (xem `README.md`).
-- 97 unit test pass; actionlint và shellcheck sạch. Ba vòng review độc lập, mọi lỗi tìm được đã sửa và có test.
-- Repo **có sẵn** được hỗ trợ:
-  - chế độ `enforcement: observe`
-  - mọi check chỉ chặn nợ mới (lint theo dòng, tsc/Brakeman/Trivy so với base, Prettier phân biệt file vốn chưa format)
-  - `debt.mjs` đo nợ trước khi onboard
+**Done and verified offline:**
+- All workflows, scripts, profiles and starters (see `README.md`).
+- 97 unit tests pass; actionlint and shellcheck clean. Three independent review rounds; every issue found was fixed and has a test.
+- **Existing** repos are supported:
+  - `enforcement: observe` mode
+  - every check blocks only new debt (line-level lint, tsc/Brakeman/Trivy compared with base, Prettier distinguishes files that were already unformatted)
+  - `debt.mjs` measures debt before onboarding
   - playbook `docs/onboarding-existing-repo.md`
-- Integration test chạy tool thật (3 kịch bản: Next.js, Rails, monorepo workspace): ESLint 9 + eslint-config-next 16, tsc 5.9, Prettier 3, dependency-cruiser 18.5, RuboCop 1.91 (rails-omakase), Brakeman 8.1.
-- Trivy 0.75, Hadolint 2.15.1, Semgrep 1.179 và Supabase CLI 2.119 (`db advisors` bắt bảng thiếu RLS) đã chạy tay qua shim.
-- Hai vòng review độc lập; các lỗ hổng tìm được đã sửa và có test. Danh sách bất biến ở `CLAUDE.md`.
+- Integration tests run real tools (3 scenarios: Next.js, Rails, monorepo workspace): ESLint 9 + eslint-config-next 16, tsc 5.9, Prettier 3, dependency-cruiser 18.5, RuboCop 1.91 (rails-omakase), Brakeman 8.1.
+- Trivy 0.75, Hadolint 2.15.1, Semgrep 1.179 and Supabase CLI 2.119 (`db advisors` catches tables missing RLS) were run manually via shims.
+- Two independent review rounds; the vulnerabilities found were fixed and have tests. The list of invariants is in `CLAUDE.md`.
 
-**Chưa từng chạy trên GitHub thật.** Mọi lời gọi GitHub/Anthropic API mới chỉ test bằng mock. Đây là rủi ro lớn nhất, nên Phase 2 là bắt buộc trước khi rollout.
+**Never run on real GitHub yet.** All GitHub and AI provider (OpenAI/Anthropic) API calls have only been tested with mocks. This is the biggest risk, so Phase 2 is mandatory before rollout.
 
-## Quy tắc làm việc
+## Working rules
 
-- Dừng lại hỏi người dùng ở mọi bước có đánh dấu **⛔ STOP**: thay đổi phạm vi cả org, tạo GitHub App, bật ruleset, mở PR hàng loạt. Những việc này khó hoàn tác hoặc ảnh hưởng người khác.
-- Mỗi lỗi phát hiện khi chạy thật: sửa code, thêm test tái hiện (mock theo response thật quan sát được), chạy lại toàn bộ test + actionlint, rồi dời tag `v1`.
-- Ghi tiến độ vào cuối file này (mục "Nhật ký") để phiên sau đọc tiếp được.
+- Stop and ask the user at every step marked **⛔ STOP**: org-wide changes, creating GitHub Apps, enabling rulesets, opening PRs in bulk. These are hard to undo or affect other people.
+- For every bug found while running for real: fix the code, add a reproducing test (mocking the real response you observed), re-run all tests + actionlint, then move the `v1` tag.
+- Record progress at the end of this file (the "Log" section) so the next session can pick up.
 
 ---
 
-## Phase 0 — Hỏi người dùng (⛔ STOP: chưa có thì không làm tiếp)
+## Phase 0 — Ask the user (⛔ STOP: do not continue without answers)
 
-| Cần biết | Vì sao |
+| Need to know | Why |
 |---|---|
-| Tên org GitHub | `./scripts/init.sh <org>` |
-| Plan: Free / Team / Enterprise Cloud | Quyết định cách ép buộc (`README.md` → "Plan GitHub") |
-| Org có repo public không | Repo `.github` phải public, report audit phải vào repo private |
-| Repo nào làm thử (pilot) | Nên chọn 1 repo Next.js + 1 repo Rails ít người dùng |
-| Repo 1 người hay có team review | `SOLO=true` khi apply ruleset |
-| Có bật AI review không, đã có `ANTHROPIC_API_KEY` chưa | `review.ai` |
-| Ai/team là platform owner | `PLATFORM_OWNERS`, CODEOWNERS |
+| GitHub org name | `./scripts/init.sh <org>` |
+| Plan: Free / Team / Enterprise Cloud | Determines how enforcement works (`README.md` → "Your GitHub plan determines how strictly this can be enforced") |
+| Does the org have public repos | The `.github` repo must be public; audit reports must go to a private repo |
+| Which repos to pilot | Ideally 1 Next.js repo + 1 Rails repo with few users |
+| Single-person repos or team review | `SOLO=true` when applying rulesets |
+| Enable AI review? Which provider (`review.provider: openai` default, or `anthropic`), and is `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` available | `review.ai`, `review.provider` |
+| Which person/team is the platform owner | `PLATFORM_OWNERS`, CODEOWNERS |
 
-## Phase 1 — Khởi tạo repo `.github`
+## Phase 1 — Initialize the `.github` repo
 
-1. `git init -b main` trong thư mục này, rồi chạy `./scripts/init.sh <org>`.
-2. `node --test 'tests/*.test.mjs'` và actionlint đều phải sạch.
-3. ⛔ STOP: xác nhận với người dùng rồi mới `gh repo create <org>/.github --public`. Nếu repo đã tồn tại (thường có `profile/README.md`), merge vào chứ không ghi đè.
+1. `git init -b main` in this directory, then run `./scripts/init.sh <org>`.
+2. `node --test 'tests/*.test.mjs'` and actionlint must both be clean.
+3. ⛔ STOP: confirm with the user before `gh repo create <org>/.github --public`. If the repo already exists (it often has `profile/README.md`), merge into it rather than overwrite.
 4. Commit, push `main`, tag `v1`.
-5. Kiểm tra `self-test` trên GitHub xanh, gồm cả job `integration`.
+5. Check that `self-test` is green on GitHub, including the `integration` job.
 
-**Nghiệm thu:** `gh run list -R <org>/.github` có self-test thành công. `git ls-remote --tags` có `v1`.
+**Acceptance:** `gh run list -R <org>/.github` shows a successful self-test. `git ls-remote --tags` shows `v1`.
 
-## Phase 2 — Kiểm chứng trên repo sandbox (bắt buộc)
+## Phase 2 — Verify on a sandbox repo (mandatory)
 
-Tạo repo private `<org>/harness-sandbox`, có thể dùng chính fixture trong `tests/integration.test.mjs`:
+Create a private repo `<org>/harness-sandbox`; you can reuse the fixtures in `tests/integration.test.mjs`:
 - `web/`: Next.js
-- `api/`: Rails tối thiểu
+- `api/`: minimal Rails
 - `supabase/`: 1 migration
 
-Thêm `org-harness.yml` + `org-pr-convention.yml` (từ `workflow-templates/`, thay `$default-branch`), bật **Allow auto-merge**, bật ruleset **chỉ cho repo sandbox** (sửa `conditions.repository_name.include` thành `["harness-sandbox"]`).
+Add `org-harness.yml` + `org-pr-convention.yml` (from `workflow-templates/`, replacing `$default-branch`), enable **Allow auto-merge**, and enable the ruleset **for the sandbox repo only** (set `conditions.repository_name.include` to `["harness-sandbox"]`).
 
-Tốt nhất là viết `scripts/e2e-sandbox.sh` dùng `gh` để tự động hoá các kịch bản dưới. Mỗi kịch bản: tạo branch, push, `gh pr create`, chờ check, rồi assert bằng `gh pr checks`, `gh pr view --json reviews,comments,autoMergeRequest`.
+Ideally write `scripts/e2e-sandbox.sh` using `gh` to automate the scenarios below. For each scenario: create a branch, push, `gh pr create`, wait for checks, then assert with `gh pr checks`, `gh pr view --json reviews,comments,autoMergeRequest`.
 
-| # | Kịch bản | Kỳ vọng | Điểm chưa chắc cần xác nhận |
+| # | Scenario | Expected | Uncertain points to confirm |
 |---|---|---|---|
-| E1 | PR sạch, 20 dòng ở `web/app/` | Check tên đúng `harness / gate` + `org / pr-convention`; bot APPROVE; auto-merge bật; PR tự merge | Tên check của reusable (`<caller job> / <job name>`); dynamic `name:` của job `gate`; `enablePullRequestAutoMerge` bằng GITHUB_TOKEN |
-| E2 | Thêm `const x: number = 'a'` + `'use client'` đọc `process.env.SECRET` | Gate đỏ; sticky comment liệt kê `tsc TS2322` và `react/client-no-server-code` kèm `file:dòng` | Gate đọc được annotation của job lồng trong reusable (`check-runs/{job.id}/annotations`; job id có = check run id không) |
-| E3 | Sửa `supabase/migrations/<cũ>.sql` | `infra / supabase` đỏ, không approve | `supabase db start` + `db advisors --local` trên runner |
-| E4 | PR sửa `.github/harness.yml` để `max_lines: 99999` kèm 500 dòng code | Không bot approve (config đọc từ base + `.github/**` cần người) | `fetch-depth: 0` đủ để `git show <base>:...` |
-| E5 | "Run workflow" `org-harness` trên branch của PR đỏ | Run mới tên `harness / gate (workflow_dispatch)`; check `harness / gate` của PR vẫn đỏ | Dynamic name trong reusable |
-| E6 | Re-run run cũ sau khi đã push commit mới | Gate chỉ ghi summary "commit cũ", không comment/approve | — |
-| E7 | Bật `review.ai: true` (merge vào base trước), PR có lỗi phân quyền rõ ràng | Review COMMENT inline có marker `harness-ai:<sha> blockers=N`; gate đỏ; re-run không gọi lại API | Structured output (`output_config.format`) với model `claude-sonnet-5-5`; inline comment `line`/`side` |
-| E8 | Tác giả tự gắn `harness:override-ai`, rồi một maintainer khác gắn | Lần 1 không có hiệu lực; lần 2 gate xanh nhưng không bot approve | `issues/{n}/events` + `collaborators/{u}/permission` với GITHUB_TOKEN (`issues: read`) |
-| E9 | Rails: `User.where("name = '#{params[:q]}'")` trong controller | `stack / rails (api)` đỏ vì `brakeman SQL Injection` | `ruby/setup-ruby` `bundler-cache` trong thư mục con; `Gem.bindir` |
-| E10 | pnpm workspace (chuyển `web/` sang pnpm) | Cài được, ESLint/tsc chạy | corepack trên Node 24 runner; `resolveBin` tìm binary hoist |
-| E11 | Không có GitHub App, chưa bật "Allow GitHub Actions to create and approve PRs" | Comment ghi chú hướng dẫn bật, không crash | Thông điệp lỗi 422 thật |
-| E12 | Có `HARNESS_APP_*` | Approve/merge do App thực hiện; push lên `main` sau merge **có** chạy workflow | `app-slug` → `HARNESS_BOT_LOGIN` |
-| E13 | Vercel preview (nếu sandbox nối Vercel) | `org-vercel-preview` chạy sau `deployment_status`, kiểm header | `environment_url`, bypass header |
-| E14 | Base có `enforcement: observe`; PR có lỗi tsc | Check `harness / gate` **xanh**, comment "👀 … nếu bật enforce, PR này sẽ bị chặn"; không approve/merge | — |
-| E15 | Base có lockfile dính CVE + Dockerfile chạy root; PR chỉ sửa README | Mọi check xanh (nợ cũ chỉ ở summary). PR thêm package có CVE mới → `security / dependencies` đỏ, chỉ liệt kê CVE mới | `git worktree add` + Trivy quét base trên runner |
-| E16 | Sửa 1 dòng trong file cũ có sẵn 20 lỗi ESLint và chưa format | Chỉ lỗi mới bị chặn; Prettier báo cảnh báo "file vốn chưa format" | baseline ESLint/Prettier trong worktree (symlink node_modules) |
-| E17 | Monorepo pnpm: PR sửa `packages/shared` làm vỡ type ở `apps/web` (không đổi) | `stack / react (apps/web)` đỏ với lỗi tsc "mới do PR gây ra" | base tự `pnpm install` trong worktree (`baseNeedsOwnDeps`) |
+| E1 | Clean PR, 20 lines in `web/app/` | Checks named exactly `harness / gate` + `org / pr-convention`; bot APPROVEs; auto-merge enabled; PR merges itself | Check names of reusable workflows (`<caller job> / <job name>`); dynamic `name:` of the `gate` job; `enablePullRequestAutoMerge` with GITHUB_TOKEN |
+| E2 | Add `const x: number = 'a'` + `'use client'` reading `process.env.SECRET` | Gate red; sticky comment lists `tsc TS2322` and `react/client-no-server-code` with `file:line` | Gate can read annotations of jobs nested in a reusable workflow (`check-runs/{job.id}/annotations`; is the job id = check run id) |
+| E3 | Edit `supabase/migrations/<old>.sql` | `infra / supabase` red, no approval | `supabase db start` + `db advisors --local` on the runner |
+| E4 | PR edits `.github/harness.yml` to `max_lines: 99999` plus 500 lines of code | No bot approval (config read from base + `.github/**` needs a human) | `fetch-depth: 0` is enough for `git show <base>:...` |
+| E5 | "Run workflow" `org-harness` on the branch of a red PR | New run named `harness / gate (workflow_dispatch)`; the PR's `harness / gate` check stays red | Dynamic name inside a reusable workflow |
+| E6 | Re-run an old run after pushing a new commit | Gate only writes a summary "old commit", no comment/approve | — |
+| E7 | Enable `review.ai: true` (merged into base first), PR with an obvious authorization bug | Inline COMMENT review with marker `harness-ai:<sha> blockers=N`; gate red; re-run does not call the API again | Structured output (OpenAI `response_format` json_schema strict / Anthropic `output_config.format`) with the provider's default model (`DEFAULT_MODELS`); inline comment `line`/`side` |
+| E8 | Author applies `harness:override-ai` themselves, then a different maintainer applies it | First time has no effect; second time gate green but no bot approval | `issues/{n}/events` + `collaborators/{u}/permission` with GITHUB_TOKEN (`issues: read`) |
+| E9 | Rails: `User.where("name = '#{params[:q]}'")` in a controller | `stack / rails (api)` red due to `brakeman SQL Injection` | `ruby/setup-ruby` `bundler-cache` in a subdirectory; `Gem.bindir` |
+| E10 | pnpm workspace (switch `web/` to pnpm) | Installs fine, ESLint/tsc run | corepack on the Node 24 runner; `resolveBin` finds hoisted binaries |
+| E11 | No GitHub App, "Allow GitHub Actions to create and approve PRs" not enabled | Comment notes how to enable it, no crash | The real 422 error message |
+| E12 | `HARNESS_APP_*` present | Approve/merge performed by the App; the push to `main` after merge **does** trigger workflows | `app-slug` → `HARNESS_BOT_LOGIN` |
+| E13 | Vercel preview (if the sandbox is connected to Vercel) | `org-vercel-preview` runs after `deployment_status`, checks headers | `environment_url`, bypass header |
+| E14 | Base has `enforcement: observe`; PR has a tsc error | `harness / gate` check **green**, comment "👀 … if enforce were on, this PR would be blocked"; no approve/merge | — |
+| E15 | Base has a lockfile with a CVE + a Dockerfile running as root; PR only edits README | All checks green (old debt only in the summary). A PR adding a package with a new CVE → `security / dependencies` red, listing only the new CVE | `git worktree add` + Trivy scanning base on the runner |
+| E16 | Edit 1 line in an old file that already has 20 ESLint errors and is unformatted | Only new errors block; Prettier warns "file was already unformatted" | ESLint/Prettier baseline in a worktree (symlinked node_modules) |
+| E17 | pnpm monorepo: PR edits `packages/shared` and breaks types in `apps/web` (unchanged) | `stack / react (apps/web)` red with a tsc error "newly caused by the PR" | base runs its own `pnpm install` in the worktree (`baseNeedsOwnDeps`) |
 
-Với mỗi điểm "chưa chắc" bị sai: sửa, thêm test mock theo response thật, rồi ghi vào Nhật ký.
+For every "uncertain" point that turns out wrong: fix it, add a mock test based on the real response, then record it in the Log.
 
-**Nghiệm thu Phase 2:** E1–E12 và E14–E17 đạt (E13 nếu có Vercel). Ghi link PR của từng kịch bản vào Nhật ký.
+**Phase 2 acceptance:** E1–E12 and E14–E17 pass (E13 if Vercel is available). Record the PR link for each scenario in the Log.
 
-## Phase 3 — GitHub App và secrets (⛔ STOP: người dùng phải tự làm trên web)
+## Phase 3 — GitHub App and secrets (⛔ STOP: the user must do this on the web)
 
-Claude Code không tạo GitHub App thay người dùng được. Hãy hướng dẫn từng bước và chờ xác nhận:
+Claude Code cannot create a GitHub App on the user's behalf. Guide them step by step and wait for confirmation:
 
-1. **App "harness bot"**: Contents R/W, Pull requests R/W. Cài cho *All repositories*. Sau đó lưu:
+1. **App "harness bot"**: Contents R/W, Pull requests R/W. Install on *All repositories*. Then store:
    ```bash
    gh variable set HARNESS_APP_CLIENT_ID --org <org> --body <client-id>
    gh secret set HARNESS_APP_PRIVATE_KEY --org <org> < key.pem
    ```
-2. **App "org audit"**: có thể là cùng App nếu thêm Administration R, Deployments R, Workflows R/W, Issues R/W. Lưu `ORG_AUDIT_APP_CLIENT_ID` (variable) và `ORG_AUDIT_APP_PRIVATE_KEY` (secret) ở repo `.github`.
-3. Đặt `AUDIT_REPORT_REPO` = một repo private, và `PLATFORM_OWNERS`.
-4. Nếu bật AI: `gh secret set ANTHROPIC_API_KEY --org <org>`.
-5. Không dùng App thì bật Org settings → Actions → "Allow GitHub Actions to create and approve pull requests".
+2. **App "org audit"**: can be the same App if you add Administration R, Deployments R, Workflows R/W, Issues R/W. Store `ORG_AUDIT_APP_CLIENT_ID` (variable) and `ORG_AUDIT_APP_PRIVATE_KEY` (secret) in the `.github` repo.
+3. Set `AUDIT_REPORT_REPO` = a private repo, and `PLATFORM_OWNERS`.
+4. If enabling AI: `gh secret set OPENAI_API_KEY --org <org>` (default `review.provider: openai`), or `gh secret set ANTHROPIC_API_KEY --org <org>` for `review.provider: anthropic`.
+5. Without an App, enable Org settings → Actions → "Allow GitHub Actions to create and approve pull requests".
 
 ## Phase 4 — Rollout
 
-1. Chạy `gh workflow run org-audit -R <org>/.github` (dry-run), rồi đọc issue report trong `AUDIT_REPORT_REPO`. Tóm tắt cho người dùng: repo nào thiếu gì, có file `.env` bị commit không (critical).
-2. ⛔ STOP: chạy `fix=true` với `only=<pilot repos>` trước, sau đó mới tới toàn org. Lệnh: `gh workflow run org-audit -R <org>/.github -f fix=true -f only=a,b`.
-3. Mỗi PR `ci: adopt org harness (v1)` có kèm `harness.yml` với `enforcement: observe`. Sau khi merge, repo ở chế độ quan sát.
-   - Repo **mới hoặc ít code**: copy file starter còn thiếu (ESLint/RuboCop), quan sát vài ngày rồi đổi sang `enforce`.
-   - Repo **có sẵn nhiều code**: làm theo **Phase 4b**.
-4. Nhắc bật **Allow auto-merge** ở từng repo, hoặc `gh api -X PATCH repos/<org>/<repo> -f allow_auto_merge=true` sau khi người dùng đồng ý.
-5. ⛔ STOP: `./scripts/apply-ruleset.sh <org> team active` (hoặc `enterprise evaluate`) **chỉ sau khi** mọi repo đã merge caller. Nếu bật sớm, PR của các repo còn lại sẽ kẹt ở "Expected — Waiting for status".
-6. Gợi ý cho người dùng: 2 tuần đầu đặt `merge.bot_approve.enabled: false` ở `profiles/base.yml` để quan sát false positive, sau đó mới bật.
+1. Run `gh workflow run org-audit -R <org>/.github` (dry run), then read the report issue in `AUDIT_REPORT_REPO`. Summarize for the user: which repos are missing what, and whether any `.env` files are committed (critical).
+2. ⛔ STOP: run `fix=true` with `only=<pilot repos>` first, and only then the whole org. Command: `gh workflow run org-audit -R <org>/.github -f fix=true -f only=a,b`.
+3. Each `ci: adopt org harness (v1)` PR includes a `harness.yml` with `enforcement: observe`. After merge, the repo is in observe mode.
+   - **New or small** repos: copy any missing starter files (ESLint/RuboCop), observe for a few days, then switch to `enforce`.
+   - Repos **with lots of existing code**: follow **Phase 4b**.
+4. Remind the user to enable **Allow auto-merge** in each repo, or run `gh api -X PATCH repos/<org>/<repo> -f allow_auto_merge=true` once the user agrees.
+5. ⛔ STOP: `./scripts/apply-ruleset.sh <org> team active` (or `enterprise evaluate`) **only after** every repo has merged its callers. If enabled too early, PRs in the remaining repos will be stuck at "Expected — Waiting for status".
+6. Suggest to the user: for the first 2 weeks set `merge.bot_approve.enabled: false` in `profiles/base.yml` to watch for false positives, then turn it on.
 
-## Phase 4b — Onboard repo có sẵn (mỗi repo một lượt, theo `docs/onboarding-existing-repo.md`)
+## Phase 4b — Onboard existing repos (one repo at a time, following `docs/onboarding-existing-repo.md`)
 
-Làm trên từng repo cũ, mỗi lần một repo, cwd là repo đó và clone `<org>/.github` ở thư mục bên cạnh.
-1. `node ../.github/scripts/harness/debt.mjs`: báo cáo nợ. Chạy thêm `stack.mjs` toàn repo để biết quy mô nợ lint.
-2. ⛔ STOP nếu có file `.env*`/`.vercel/` bị commit hoặc secret trong lịch sử: liệt kê cho người dùng, chờ họ rotate. Không tự viết lại lịch sử git.
-3. Đọc code và viết `ARCHITECTURE.md` mô tả kiến trúc **thực tế**. Viết `harness.yml` từ khung của `debt.mjs`: khai báo profile rõ ràng, **chưa tắt hay hạ mức rule nào**. Rule nào `debt.mjs` đánh dấu "xem lại" thì đánh giá sau giai đoạn quan sát, dựa trên báo nhầm thật.
-4. ⛔ STOP: cho người dùng xem báo cáo nợ, ARCHITECTURE.md, harness.yml trước khi mở PR.
-5. Quan sát 1–2 tuần, gom các trường hợp báo nhầm và sửa rule. ⛔ Người dùng quyết định ngày đổi `enforce`.
+Work on each existing repo, one at a time, with that repo as cwd and `<org>/.github` cloned in a sibling directory.
+1. `node ../.github/scripts/harness/debt.mjs`: debt report. Also run `stack.mjs` on the whole repo to gauge the size of the lint debt.
+2. ⛔ STOP if any `.env*`/`.vercel/` files are committed or secrets are in history: list them for the user and wait for them to rotate. Never rewrite git history yourself.
+3. Read the code and write an `ARCHITECTURE.md` describing the **actual** architecture. Write `harness.yml` from the `debt.mjs` scaffold: declare profiles explicitly, **do not disable or downgrade any rule yet**. Rules that `debt.mjs` flags "review" are evaluated after the observe period, based on real false positives.
+4. ⛔ STOP: show the user the debt report, ARCHITECTURE.md and harness.yml before opening the PR.
+5. Observe for 1–2 weeks, collect false positives and fix rules. ⛔ The user decides when to switch to `enforce`.
 
-**Nghiệm thu mỗi repo:** có `ARCHITECTURE.md` được người dùng duyệt, `harness.yml` đã chỉnh, tỉ lệ PR "sẽ bị chặn oan" trong giai đoạn quan sát dưới ~10%.
+**Acceptance per repo:** an `ARCHITECTURE.md` approved by the user, a tuned `harness.yml`, and under ~10% of PRs "wrongly blocked" during the observe period.
 
-## Phase 5 — Backlog (làm khi được yêu cầu)
+## Phase 5 — Backlog (do when asked)
 
-| Việc | Ghi chú |
+| Task | Notes |
 |---|---|
-| Profile `go`, `python` | Theo mục "Thêm một stack mới" trong `CLAUDE.md` |
-| Chạy test suite của repo (rspec/vitest) | Mỗi repo cần DB/service khác nhau. Hướng đi: `harness.yml` khai báo `test.command` + `services`, hoặc để CI riêng của repo làm required check thứ ba |
-| Dependabot/Renovate tự merge | Hiện lockfile và manifest luôn cần người duyệt. Nếu muốn bot dependency tự merge bản patch, cần policy riêng: `authors` + chỉ semver patch + không đổi `resolved` sang registry khác |
-| Annotation bị giới hạn 10 lỗi/step | Gate có thể thiếu chi tiết. Hướng đi: mỗi job ghi `findings.json` lên artifact, gate tải về |
-| Cache dependency (pnpm store, bundler) cho job `js`/`rails` | Hiện mỗi PR cài lại từ đầu |
-| Baseline tsc cho Yarn PnP | Hiện bỏ qua (coi lỗi ngoài file đổi là có sẵn) |
-| `trivy image` sau khi build Docker | Chưa build image trong harness |
-| Deploy Supabase (`db push`) sau khi gate xanh trên `main` | Cần `SUPABASE_ACCESS_TOKEN`, environment có approval |
-| Chi phí AI | Mỗi head SHA 1 lần gọi, diff tối đa 120k ký tự. Cân nhắc chỉ bật cho PR có label, hoặc dùng model nhỏ hơn cho PR < 50 dòng |
+| `go`, `python` profiles | Follow "Adding a new stack" in `CLAUDE.md` |
+| Run the repo's test suite (rspec/vitest) | Each repo needs different DBs/services. Direction: `harness.yml` declares `test.command` + `services`, or let the repo's own CI be the third required check |
+| Auto-merge for Dependabot/Renovate | Lockfiles and manifests currently always need a human. To let dependency bots auto-merge patch releases, a dedicated policy is needed: `authors` + semver patch only + `resolved` must not change to a different registry |
+| Annotations are limited to 10 errors/step | The gate may miss details. Direction: each job writes `findings.json` as an artifact, the gate downloads it |
+| Dependency caching (pnpm store, bundler) for the `js`/`rails` jobs | Currently every PR installs from scratch |
+| tsc baseline for Yarn PnP | Currently skipped (errors outside changed files are treated as pre-existing) |
+| `trivy image` after building Docker | The harness does not build images yet |
+| Supabase deploy (`db push`) after a green gate on `main` | Needs `SUPABASE_ACCESS_TOKEN`, an environment with approval |
+| AI cost | One call per head SHA, diff capped at 120k characters. Consider enabling only for labeled PRs, or using a smaller model for PRs < 50 lines |
 
-## Rủi ro đã biết
+## Known risks
 
-- Rule kiến trúc là regex nên vẫn có thể báo nhầm. Có thể dùng `harness-disable-line <id>`, nhưng PR đó sẽ cần người duyệt. Theo dõi false positive trong 2 tuần đầu và chỉnh `profiles/*.yml`.
-- `@ts-expect-error` nằm trong `suppression_markers`, nên PR dùng nó luôn cần người duyệt. Nếu quá ồn thì bàn lại với người dùng.
-- dependency-cruiser chạy kèm `typescript@5` (TS 7 bản Go chưa có JS API ổn định cho depcruise).
-- Với plan Team, caller nằm trong repo con nên vẫn sửa được trong PR. Hàng rào là CODEOWNERS + `require_code_owner_review` + org-audit. Chỉ Enterprise mới khoá hẳn.
+- Architecture rules are regexes, so false positives are possible. `harness-disable-line <id>` is available, but that PR will need a human review. Track false positives during the first 2 weeks and tune `profiles/*.yml`.
+- `@ts-expect-error` is in `suppression_markers`, so PRs using it always need a human review. If too noisy, discuss with the user.
+- dependency-cruiser runs with `typescript@5` (the Go-based TS 7 has no stable JS API for depcruise yet).
+- On the Team plan, callers live in child repos and can still be edited in a PR. The guardrails are CODEOWNERS + `require_code_owner_review` + org-audit. Only Enterprise locks this down fully.
 
 ---
 
-## Nhật ký
+## Log
 
-<!-- Claude Code ghi vào đây: ngày · phase · việc đã làm · link PR/run · lỗi phát hiện và cách sửa -->
-- 2026-10-06 · Phase 0 (HARNESS_PLAN.md) · `gh` đăng nhập (admin:org, repo, workflow). Org plan Team. App `blended-asia-harness` cài All repositories, quyền: administration R, contents RW, deployments R, issues RW, metadata R, pull_requests RW, workflows RW, không webhook; key kiểm chứng bằng JWT → `GET /app` OK. Đã đặt org variable `HARNESS_APP_CLIENT_ID` + org secret `HARNESS_APP_PRIVATE_KEY` (visibility all). Còn: `ORG_AUDIT_APP_*` ở repo `.github` (dùng cùng App), `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` khi bật AI review, team `@Blended-Asia/platform`.
-- 2026-10-06 · Phase 1 (HARNESS_PLAN.md) · `git init -b main` + 10 commit local (chưa push). Đủ 8 thay đổi: OpenAI provider (`review.provider`, `DEFAULT_MODELS`), regex env mẫu `.env.<x>.example` (3 chỗ), path nhạy cảm `**/db/migrate/**`…, `gate.branches` (verdict + pr-convention, đọc từ base), 4 ruleset nhóm + `apply-ruleset.sh` (REPOS/BRANCHES/DRY_RUN), org-audit theo nhánh làm việc (adoption PR vào develop, starter có `gate.branches`), Ruby version (root `.ruby-version`/`.tool-versions`/Gemfile), `scripts/e2e-sandbox.sh`. Thêm: sửa `git grep -E '\b'` (BSD/macOS bỏ sót) trong check biến public; test org-audit flaky (log làm hỏng IPC của node:test). Kết quả: 111 pass / 0 fail (3 skip integration), actionlint + shellcheck sạch. Integration test trên Mac: react + rails fail **giống hệt bản gốc** (Ruby hệ thống 2.6, depcruise) → không do thay đổi; chờ job `integration` của self-test trên runner (Phase 2). Còn mở: model OpenAI mặc định (`DEFAULT_MODELS.openai = 'gpt-5'`, chưa xác minh với tài khoản OpenAI của org).
-- 2026-10-06 · Phase 2 · Đã tạo `Blended-Asia/.github` (public), push `main`, tag `v1`; repo private `org-audit-reports`; repo vars `AUDIT_REPORT_REPO=org-audit-reports`, `ORG_AUDIT_APP_CLIENT_ID`, `PLATFORM_OWNERS=@Blended-Asia/platform`, secret `ORG_AUDIT_APP_PRIVATE_KEY`; team `platform`. self-test lần 1: `integration` đỏ (react) → 2 lỗi thật: depcruise qua `npx -p typescript@5` không có transpiler TS khi repo đã có typescript → quét 0 file (sửa: cài vào thư mục riêng + cảnh báo khi quét 0 file); base worktree dùng realpath (macOS). self-test lần 2 (run 37443423669): `test` + `integration` xanh. **Còn: dời tag `v1` lên `eedb3ac` (cần force push, người dùng tự chạy).**
+<!-- Claude Code writes here: date · phase · work done · PR/run links · bugs found and how they were fixed -->
+- 2026-10-06 · Phase 0 (HARNESS_PLAN.md) · `gh` logged in (admin:org, repo, workflow). Org plan Team. App `blended-asia-harness` installed on All repositories, permissions: administration R, contents RW, deployments R, issues RW, metadata R, pull_requests RW, workflows RW, no webhook; key verified via JWT → `GET /app` OK. Set org variable `HARNESS_APP_CLIENT_ID` + org secret `HARNESS_APP_PRIVATE_KEY` (visibility all). Remaining: `ORG_AUDIT_APP_*` in the `.github` repo (same App), `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` when enabling AI review, team `@Blended-Asia/platform`.
+- 2026-10-06 · Phase 1 (HARNESS_PLAN.md) · `git init -b main` + 10 local commits (not pushed). All 8 changes done: OpenAI provider (`review.provider`, `DEFAULT_MODELS`), sample env regex `.env.<x>.example` (3 places), sensitive paths `**/db/migrate/**`…, `gate.branches` (verdict + pr-convention, read from base), 4 group rulesets + `apply-ruleset.sh` (REPOS/BRANCHES/DRY_RUN), org-audit per working branch (adoption PR into develop, starter with `gate.branches`), Ruby version (root `.ruby-version`/`.tool-versions`/Gemfile), `scripts/e2e-sandbox.sh`. Also: fixed `git grep -E '\b'` (missed matches on BSD/macOS) in the public-variable check; flaky org-audit test (logging broke node:test IPC). Result: 111 pass / 0 fail (3 integration skipped), actionlint + shellcheck clean. Integration tests on Mac: react + rails fail **exactly as on the original** (system Ruby 2.6, depcruise) → not caused by the changes; waiting for the self-test `integration` job on the runner (Phase 2). Still open: default OpenAI model (`DEFAULT_MODELS.openai = 'gpt-5'`, not yet verified against the org's OpenAI account).
+- 2026-10-06 · Phase 2 · Created `Blended-Asia/.github` (public), pushed `main`, tagged `v1`; private repo `org-audit-reports`; repo vars `AUDIT_REPORT_REPO=org-audit-reports`, `ORG_AUDIT_APP_CLIENT_ID`, `PLATFORM_OWNERS=@Blended-Asia/platform`, secret `ORG_AUDIT_APP_PRIVATE_KEY`; team `platform`. self-test run 1: `integration` red (react) → 2 real bugs: depcruise via `npx -p typescript@5` had no TS transpiler when the repo already has typescript → scanned 0 files (fix: install into a separate directory + warn when 0 files are scanned); base worktree uses realpath (macOS). self-test run 2 (run 37443423669): `test` + `integration` green. **Remaining: move tag `v1` to `eedb3ac` (needs a force push; the user runs it).**

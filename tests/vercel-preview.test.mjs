@@ -31,7 +31,7 @@ const SECURE = {
   'permissions-policy': 'camera=()',
 };
 
-test('preview đủ header, SPA fallback trả 200 cho /.env (HTML) → pass', async () => {
+test('preview with all headers, SPA fallback returning 200 for /.env (HTML) → pass', async () => {
   const s = await serve((req, res) => { res.writeHead(200, { ...SECURE, 'content-type': 'text/html' }); res.end('<html>app</html>'); });
   try {
     const log = await run(s.url);
@@ -40,21 +40,21 @@ test('preview đủ header, SPA fallback trả 200 cho /.env (HTML) → pass', a
   } finally { s.close(); }
 });
 
-test('thiếu header bắt buộc + lộ .env + X-Powered-By → fail', async () => {
+test('missing required headers + exposed .env + X-Powered-By → fail', async () => {
   const s = await serve((req, res) => {
     if (req.url === '/.env') { res.writeHead(200, { 'content-type': 'text/plain' }); return res.end('SUPABASE_SERVICE_ROLE_KEY=eyJ...\n'); }
     res.writeHead(200, { 'x-powered-by': 'Next.js', 'content-type': 'text/html' }); res.end('ok');
   });
   try {
     const log = await run(s.url);
-    assert.match(log.failed, /4 vấn đề/); // HSTS, nosniff, clickjacking, /.env
-    assert.ok(log.errors.some((e) => /\/\.env đang public/.test(e)));
+    assert.match(log.failed, /4 security issues/); // HSTS, nosniff, clickjacking, /.env
+    assert.ok(log.errors.some((e) => /\/\.env is publicly accessible/.test(e)));
     assert.ok(log.warnings.some((w) => /X-Powered-By/.test(w)));
     assert.ok(log.warnings.some((w) => /Content-Security-Policy/.test(w)));
   } finally { s.close(); }
 });
 
-test('Deployment Protection: 401 nếu thiếu bypass, gửi đúng header khi có secret', async () => {
+test('Deployment Protection: 401 without the bypass, sends the right header when the secret is set', async () => {
   const s = await serve((req, res) => {
     if (req.headers['x-vercel-protection-bypass'] !== 's3cret') { res.writeHead(401); return res.end(); }
     res.writeHead(200, SECURE); res.end('ok');

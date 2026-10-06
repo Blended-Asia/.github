@@ -1,5 +1,5 @@
-# Do org quản lý — không sửa trực tiếp. Cấu hình repo nằm ở .github/harness.yml.
-# Required check trên ruleset: "harness / gate"
+# Managed by the org — do not edit directly. Repo config lives in .github/harness.yml.
+# Required check in the ruleset: "harness / gate"
 name: org-harness
 
 on:
@@ -9,7 +9,7 @@ on:
   push:
     branches: [$default-branch]
   schedule:
-    - cron: "17 1 * * 1" # thứ Hai 08:17 giờ VN: quét lại CVE mới cho code đang chạy
+    - cron: "17 1 * * 1" # Monday 08:17 Vietnam time (UTC+7): rescan running code for new CVEs
   workflow_dispatch:
 
 permissions:

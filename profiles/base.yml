@@ -1,46 +1,46 @@
-# Mặc định chung cho mọi repo. Repo ghi đè bằng .github/harness.yml (cùng cấu trúc).
+# Shared defaults for every repo. A repo overrides them with .github/harness.yml (same structure).
 
-# enforce: gate đỏ khi chưa đạt, bot approve + auto-merge khi đạt.
-# observe: chấm và comment như thật nhưng KHÔNG chặn, KHÔNG tự approve/merge — dùng khi onboard repo có sẵn.
+# enforce: the gate is red until checks pass; the bot approves + auto-merges when they do.
+# observe: grades and comments as usual but does NOT block and does NOT approve/merge — use when onboarding an existing repo.
 enforcement: enforce
 gate:
-  branches: []              # PR vào nhánh nào thì bị gate. [] = default branch. Repo git-flow: [develop]. Hỗ trợ glob (release/*).
-                            # PR vào nhánh khác: harness / gate và org / pr-convention xanh, không comment, không approve/merge.
+  branches: []              # PRs into which branches are gated. [] = default branch. Git-flow repos: [develop]. Globs supported (release/*).
+                            # PRs into other branches: harness / gate and org / pr-convention are green, no comments, no approve/merge.
 convention:
-  scope: changed            # changed: chỉ bắt lỗi ở dòng/file thay đổi trong PR · all: toàn bộ repo
-  granularity: line         # line: lint/format/tsc chỉ chặn lỗi ở dòng sửa hoặc lỗi mới so với base (hợp repo cũ)
-                            # file: file nào PR chạm vào thì phải sạch hoàn toàn (hợp repo mới)
+  scope: changed            # changed: only flag problems in lines/files changed by the PR · all: the whole repo
+  granularity: line         # line: lint/format/tsc only block problems on modified lines or new compared to base (suits existing repos)
+                            # file: every file the PR touches must be fully clean (suits new repos)
 
 review:
-  ai: false                 # true: bật AI review (cần secret OPENAI_API_KEY, hoặc ANTHROPIC_API_KEY nếu provider: anthropic)
+  ai: false                 # true: enable AI review (needs the OPENAI_API_KEY secret, or ANTHROPIC_API_KEY if provider: anthropic)
   provider: openai          # openai (Chat Completions + Structured Outputs) | anthropic
-  diff_exclude:             # bỏ khỏi diff gửi AI (nhiễu, tốn token). Lockfile đã luôn cần người duyệt.
+  diff_exclude:             # excluded from the diff sent to the AI (noisy, costs tokens). Lockfiles always require a human reviewer anyway.
     - "**/package-lock.json"
     - "**/pnpm-lock.yaml"
     - "**/yarn.lock"
     - "**/bun.lock"
     - "**/Gemfile.lock"
-  model: ""                 # rỗng = mặc định theo provider (DEFAULT_MODELS trong scripts/harness/verdict.mjs)
-  language: vi              # ngôn ngữ comment của AI
+  model: ""                 # empty = provider default (DEFAULT_MODELS in scripts/harness/verdict.mjs)
+  language: en              # language the AI writes review comments in
   block_on: [critical, major]
-  guidelines: ARCHITECTURE.md   # tài liệu kiến trúc để AI đối chiếu (nếu có)
+  guidelines: ARCHITECTURE.md   # architecture doc the AI checks against (if present)
   max_diff_chars: 120000
-  fail_closed: false        # true: AI lỗi/timeout thì chặn merge
-  override_label: "harness:override-ai"   # người có quyền maintain/admin (khác tác giả PR) gắn label này để bỏ qua blocker của AI
+  fail_closed: false        # true: block merge if the AI errors/times out
+  override_label: "harness:override-ai"   # someone with maintain/admin permission (not the PR author) applies this label to override AI blockers
 
 merge:
-  auto: true                # harness đạt → bật auto-merge (GitHub vẫn chờ đủ required checks + review)
+  auto: true                # harness passes → enable auto-merge (GitHub still waits for all required checks + reviews)
   method: squash            # squash | merge | rebase
-  bot_approve:              # bot approve thay người khi thoả TẤT CẢ điều kiện
+  bot_approve:              # the bot approves in place of a human when ALL conditions are met
     enabled: true
-    max_lines: 200          # tổng dòng thay đổi của mọi file (kể cả file generate)
-    authors: []             # rỗng = mọi tác giả; vd ["renovate[bot]", "my-agent[bot]"]
-  # Đụng các path này → bot không bao giờ approve, phải có người review.
-  # Luôn cộng thêm (không tắt được): .github/**, CODEOWNERS.
+    max_lines: 200          # total changed lines across all files (including generated files)
+    authors: []             # empty = any author; e.g. ["renovate[bot]", "my-agent[bot]"]
+  # Touching these paths → the bot never approves; a human must review.
+  # Always added (cannot be disabled): .github/**, CODEOWNERS.
   human_required_paths:
-    # dữ liệu, hạ tầng, bảo mật
+    # data, infrastructure, security
     - "**/migrations/**"
-    - "**/db/migrate/**"        # **/ khớp cả root lẫn thư mục con (vd jfoodhub/db/migrate)
+    - "**/db/migrate/**"        # **/ matches both the root and subdirectories (e.g. jfoodhub/db/migrate)
     - "**/db/schema.rb"
     - "**/db/structure.sql"
     - "**/supabase/**"
@@ -51,7 +51,7 @@ merge:
     - "**/config/initializers/**"
     - "Dockerfile"
     - "**/Dockerfile*"
-    # dependency (manifest + lockfile: tránh đổi resolved/integrity lén lút)
+    # dependencies (manifests + lockfiles: prevents sneaky resolved/integrity changes)
     - "**/package.json"
     - "**/Gemfile"
     - "**/Gemfile.lock"
@@ -61,7 +61,7 @@ merge:
     - "**/bun.lock"
     - "**/.npmrc"
     - "**/.yarnrc*"
-    # config của chính các tool chấm điểm và file "bỏ qua lỗi"
+    # config of the grading tools themselves and "ignore" files
     - "**/.rubocop*.yml"
     - "**/eslint.config.*"
     - "**/.eslintrc*"
@@ -77,7 +77,7 @@ merge:
     - "**/trivy.y*ml"
     - "**/.semgrepignore"
     - "**/.hadolint.y*ml"
-  # Dòng mới chứa các marker này → cần người duyệt (đang tắt kiểm tra có chủ đích)
+  # New lines containing these markers → need a human reviewer (checks are being intentionally disabled)
   suppression_markers:
     - "harness-disable-line"
     - "nosemgrep"
@@ -94,7 +94,7 @@ merge:
     - "trivy:ignore"
     - "prettier-ignore"
     - "hadolint ignore"
-  # Chỉ dùng để hiển thị "quy mô" (không ảnh hưởng ngưỡng bot approve)
+  # Only used to display "size" (does not affect the bot-approve threshold)
   size_exclude:
     - "**/package-lock.json"
     - "**/pnpm-lock.yaml"

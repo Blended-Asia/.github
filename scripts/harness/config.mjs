@@ -1,5 +1,5 @@
-// Đọc cấu hình harness: profiles/base.yml ← profiles/<stack>.yml ← .github/harness.yml của repo.
-// CLI: node config.mjs plan   → in kế hoạch chạy (profile nào, ở thư mục nào) cho workflow.
+// Read harness config: profiles/base.yml ← profiles/<stack>.yml ← the repo's .github/harness.yml.
+// CLI: node config.mjs plan   → print the run plan (which profiles, in which directories) for the workflow.
 import path from 'node:path';
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +10,7 @@ export const DEFAULT_HARNESS_DIR = path.resolve(path.dirname(fileURLToPath(impor
 const MAX_PROFILES = 8;
 const SKIP_DIR = /(^|\/)(node_modules|vendor|fixtures|examples?|test|spec|tmp|dist|build)\//;
 
-/** Tự nhận diện stack từ danh sách file tracked. read(path) → nội dung hoặc null. */
+/** Auto-detect stacks from the list of tracked files. read(path) → content or null. */
 export function detectProfiles(files, read) {
   const set = new Set(files);
   const manifests = files.filter((f) => /(^|\/)(Gemfile|package\.json)$/.test(f) && f.split('/').length <= 3 && !SKIP_DIR.test(f));
@@ -21,7 +21,7 @@ export function detectProfiles(files, read) {
     let rails = false;
     if (set.has(at('Gemfile'))) {
       const gemfile = read(at('Gemfile')) ?? '';
-      // Không dò Gemfile.lock: gem/engine cũng kéo rails vào lock nhưng không phải app Rails
+      // Don't inspect Gemfile.lock: gems/engines also pull rails into the lock without being a Rails app
       rails = set.has(at('config/application.rb')) || /^\s*gem\s+["'](rails|railties)["']/m.test(gemfile);
       if (rails) found.push({ name: 'rails', path: dir });
     }
@@ -38,26 +38,26 @@ export function detectProfiles(files, read) {
     }
   }
   if (found.length > MAX_PROFILES) {
-    console.log(annotation({ severity: 'warn', title: 'harness', message: `Nhận diện ${found.length} profile, chỉ chạy ${MAX_PROFILES} đầu tiên. Khai báo profiles trong .github/harness.yml.` }));
+    console.log(annotation({ severity: 'warn', title: 'harness', message: `Detected ${found.length} profiles; only the first ${MAX_PROFILES} will run. Declare profiles in .github/harness.yml.` }));
   }
   return found.slice(0, MAX_PROFILES);
 }
 
 function validateRule(r, where) {
   const problems = [];
-  if (!r.id) problems.push('thiếu id');
-  if (!Array.isArray(r.paths) || !r.paths.length) problems.push('thiếu paths');
-  if (!r.forbid) problems.push('thiếu forbid');
+  if (!r.id) problems.push('missing id');
+  if (!Array.isArray(r.paths) || !r.paths.length) problems.push('missing paths');
+  if (!r.forbid) problems.push('missing forbid');
   for (const k of ['forbid', 'allow', 'if_file_matches']) {
-    if (r[k]) try { new RegExp(r[k]); } catch (e) { problems.push(`${k} không phải regex hợp lệ: ${e.message}`); }
+    if (r[k]) try { new RegExp(r[k]); } catch (e) { problems.push(`${k} is not a valid regex: ${e.message}`); }
   }
-  if (r.severity && !['error', 'warn'].includes(r.severity)) problems.push('severity phải là error|warn');
-  if (problems.length) throw new Error(`Rule ${r.id ?? '(không id)'} trong ${where}: ${problems.join('; ')}`);
+  if (r.severity && !['error', 'warn'].includes(r.severity)) problems.push('severity must be error|warn');
+  if (problems.length) throw new Error(`Rule ${r.id ?? '(no id)'} in ${where}: ${problems.join('; ')}`);
 }
 
 /**
- * configRef: commit để đọc .github/harness.yml. Trên PR luôn là BASE — PR không thể tự nới lỏng
- * cấu hình chấm điểm chính nó; thay đổi harness.yml chỉ có hiệu lực sau khi merge (và cần người duyệt).
+ * configRef: the commit to read .github/harness.yml from. On a PR this is always the BASE — a PR cannot loosen
+ * the config that grades it; harness.yml changes only take effect after merge (and require a reviewer).
  */
 export function resolveConfig({ root = '.', harnessDir = DEFAULT_HARNESS_DIR, files, configPath = '.github/harness.yml', configRef = '' } = {}) {
   const read = (p) => readText(path.join(root, p));
@@ -70,22 +70,22 @@ export function resolveConfig({ root = '.', harnessDir = DEFAULT_HARNESS_DIR, fi
     ? repo.profiles.map((p) => (typeof p === 'string' ? { name: p, path: '.' } : { name: p.name, path: p.path ?? '.', checks: p.checks }))
     : detectProfiles(list, read);
   for (const p of profiles) {
-    if (!PROFILES.includes(p.name)) throw new Error(`Profile "${p.name}" không tồn tại (có: ${PROFILES.join(', ')})`);
+    if (!PROFILES.includes(p.name)) throw new Error(`Profile "${p.name}" does not exist (available: ${PROFILES.join(', ')})`);
   }
 
   const { profiles: _p, architecture: _a, checks: _c, ...rest } = repo;
   const merged = deepMerge(base, rest);
   const disabled = new Set(repo.architecture?.disable ?? []);
-  // Hạ/nâng mức của rule mặc định, vd { "rails/view-no-query": warn } khi onboard repo có nhiều nợ
+  // Lower/raise a default rule's severity, e.g. { "rails/view-no-query": warn } when onboarding a repo with lots of debt
   const severityOverride = repo.architecture?.severity ?? {};
   const rules = [];
   const notices = [];
   const out = profiles.map((p) => {
     const def = loadYaml(path.join(harnessDir, `profiles/${p.name}.yml`)) ?? {};
     for (const r of def.architecture?.rules ?? []) {
-      // Rule bảo mật của org không tắt/hạ mức được từ repo (bỏ qua từng dòng bằng harness-disable-line → cần người duyệt)
+      // Org security rules cannot be disabled/downgraded from the repo (skip individual lines with harness-disable-line → needs a reviewer)
       if (r.security && (disabled.has(r.id) || severityOverride[r.id] === 'warn')) {
-        notices.push(`Rule bảo mật ${r.id} không tắt hay hạ mức được từ harness.yml; cấu hình này bị bỏ qua.`);
+        notices.push(`Security rule ${r.id} cannot be disabled or downgraded from harness.yml; this setting is ignored.`);
       } else if (disabled.has(r.id)) continue;
       rules.push({
         ...r,
@@ -107,7 +107,7 @@ export function resolveConfig({ root = '.', harnessDir = DEFAULT_HARNESS_DIR, fi
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const cmd = process.argv[2];
   if (cmd !== 'plan') {
-    console.error('Dùng: node config.mjs plan');
+    console.error('Usage: node config.mjs plan');
     process.exit(2);
   }
   const configPath = process.env.CONFIG_PATH || '.github/harness.yml';
@@ -121,9 +121,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     setOutput('js', pick((p) => p.name !== 'rails'));
     setOutput('scope', cfg.convention?.scope ?? 'changed');
     setOutput('granularity', cfg.convention?.granularity ?? 'line');
-    const list = cfg.profiles.map((p) => `\`${p.name}\` @ \`${p.path}\``).join(', ') || '_không nhận diện được stack nào_';
-    const src = process.env.BASE_SHA ? ` · config đọc từ base \`${process.env.BASE_SHA.slice(0, 7)}\`` : '';
-    summary(`### Harness plan\nProfiles${cfg.detected ? ' (tự nhận diện)' : ''}: ${list} · ${cfg.rules.length} rule kiến trúc · scope: \`${cfg.convention?.scope}\`${src}`);
+    const list = cfg.profiles.map((p) => `\`${p.name}\` @ \`${p.path}\``).join(', ') || '_no stack detected_';
+    const src = process.env.BASE_SHA ? ` · config read from base \`${process.env.BASE_SHA.slice(0, 7)}\`` : '';
+    summary(`### Harness plan\nProfiles${cfg.detected ? ' (auto-detected)' : ''}: ${list} · ${cfg.rules.length} architecture rule(s) · scope: \`${cfg.convention?.scope}\`${src}`);
     console.log(JSON.stringify(cfg.profiles));
   } catch (e) {
     console.log(annotation({ severity: 'error', file: configPath, title: 'harness config', message: e.message }));

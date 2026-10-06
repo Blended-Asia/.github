@@ -1,5 +1,5 @@
-# Chỉ dùng cho GitHub Enterprise Cloud: ruleset "Require workflows to pass" trỏ vào file này
-# (xem rulesets/org-baseline-enterprise.json). Repo con không cần caller và không sửa được.
+# GitHub Enterprise Cloud only: the "Require workflows to pass" ruleset points at this file
+# (see rulesets/org-baseline-enterprise.json). Child repos need no caller and cannot modify it.
 name: org-harness
 
 on:

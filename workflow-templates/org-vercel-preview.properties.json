@@ -1,6 +1,6 @@
 {
   "name": "Org: Vercel preview check",
-  "description": "Kiểm tra security headers và file nhạy cảm trên Vercel Preview sau mỗi lần deploy.",
+  "description": "Checks security headers and sensitive files on the Vercel Preview after each deploy.",
   "iconName": "octicon globe",
   "categories": ["Deployment"],
   "filePatterns": ["vercel.json", "next.config.*"]

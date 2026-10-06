@@ -1,42 +1,42 @@
-# Reusable: security baseline cho mọi repo (không phụ thuộc GitHub Advanced Security).
-#   secrets       – TruffleHog quét secret trong diff/commit + chặn commit file .env + biến public lộ secret
-#   dependencies  – Trivy quét CVE trong lockfile (npm/pnpm/yarn/pip/go/...)
-#   sast          – Semgrep, trên PR chỉ báo lỗi MỚI so với base (baseline)
-# Bỏ qua finding đã chấp nhận: .trivyignore, // nosemgrep, .semgrepignore ở repo con.
+# Reusable: security baseline for every repo (does not depend on GitHub Advanced Security).
+#   secrets       – TruffleHog scans the diff/commits for secrets + blocks committed .env files + public vars leaking secrets
+#   dependencies  – Trivy scans lockfiles for CVEs (npm/pnpm/yarn/pip/go/...)
+#   sast          – Semgrep; on PRs only reports findings that are NEW relative to base (baseline)
+# To suppress accepted findings: .trivyignore, // nosemgrep, .semgrepignore in the child repo.
 name: security
 
 on:
   workflow_call:
     inputs:
       fail_severity:
-        description: Mức CVE làm fail (Trivy)
+        description: CVE severities that fail the check (Trivy)
         type: string
         default: HIGH,CRITICAL
       ignore_unfixed:
-        description: Bỏ qua CVE chưa có bản vá
+        description: Ignore CVEs that have no fix yet
         type: boolean
         default: true
       semgrep:
         type: boolean
         default: true
       semgrep_config:
-        description: Ruleset Semgrep (cách nhau bằng dấu cách)
+        description: Semgrep rulesets (space-separated)
         type: string
         default: p/default
       semgrep_severity:
-        description: Mức finding Semgrep làm fail
+        description: Semgrep finding severity that fails the check
         type: string
         default: ERROR
       env_file_allowlist:
-        description: Regex các file .env được phép commit
+        description: Regex of .env files that may be committed
         type: string
         default: '\.env(\.[^/.]+)*\.(example|sample|template|defaults)$'
       public_env_prefixes:
-        description: Prefix biến môi trường bị bundle ra client
+        description: Env var prefixes that get bundled into the client
         type: string
         default: NEXT_PUBLIC_|VITE_|EXPO_PUBLIC_|PUBLIC_|REACT_APP_|NUXT_PUBLIC_
       fail_on:
-        description: "Trên PR: new = chỉ chặn CVE mới so với lockfile của base (nợ cũ chỉ báo cáo) · all = chặn mọi CVE"
+        description: "On PRs: new = block only CVEs new relative to the base lockfile (existing debt is only reported) · all = block every CVE"
         type: string
         default: new
       trivy_version:
@@ -66,29 +66,29 @@ jobs:
       - name: TruffleHog (verified + unknown secrets)
         uses: trufflesecurity/trufflehog@4dd8831c5f12599465d4d45c3c447b4018a34c85 # v3.97.9
         with:
-          # merge_group không được action tự xử lý → truyền base/head rõ ràng để không quét lại toàn bộ lịch sử
+          # The action does not handle merge_group itself → pass base/head explicitly so it doesn't rescan the whole history
           base: ${{ github.event.merge_group.base_sha || '' }}
           head: ${{ github.event.merge_group.head_sha || '' }}
           extra_args: --results=verified,unknown
 
-      - name: Không commit file .env / thư mục .vercel
+      - name: No committed .env files / .vercel directory
         env:
           ALLOW: ${{ inputs.env_file_allowlist }}
         run: |
           bad=$(git ls-files | grep -E '(^|/)\.env(\.[^/]+)?$' | grep -vE "$ALLOW" || true)
           vercel=$(git ls-files | grep -E '(^|/)\.vercel/' || true)
           rc=0
-          for f in $bad; do echo "::error file=$f::File env bị commit. Xoá khỏi git (git rm --cached), thêm vào .gitignore và ROTATE các secret bên trong."; rc=1; done
-          for f in $vercel; do echo "::error file=$f::Thư mục .vercel/ không được commit (có thể chứa .env.*.local từ 'vercel pull')."; rc=1; done
-          [ $rc -eq 0 ] && echo "OK: không có file env/.vercel bị commit"
+          for f in $bad; do echo "::error file=$f::Env file is committed. Remove it from git (git rm --cached), add it to .gitignore and ROTATE the secrets it contains."; rc=1; done
+          for f in $vercel; do echo "::error file=$f::The .vercel/ directory must not be committed (it may contain .env.*.local from 'vercel pull')."; rc=1; done
+          [ $rc -eq 0 ] && echo "OK: no committed env/.vercel files"
           exit $rc
 
-      - name: Biến public không được mang tên secret
+      - name: Public variables must not have secret-like names
         env:
           PREFIXES: ${{ inputs.public_env_prefixes }}
         run: |
-          # vd NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY → bị bundle vào JS phía client.
-          # PR: chỉ xét dòng thêm mới (nợ cũ không chặn mọi PR). Push/schedule: quét toàn repo.
+          # e.g. NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY → gets bundled into client-side JS.
+          # PR: only added lines are checked (existing debt doesn't block every PR). Push/schedule: scan the whole repo.
           python3 - <<'PY'
           # ---- public-env:begin ----
           import os, re, subprocess, sys
@@ -111,7 +111,7 @@ jobs:
                       if pattern.search(l[1:]): hits.append((f, n))
                       n += 1
           else:
-              # Không dùng `git grep -E`: `\b` không có trong ERE của BSD/macOS → bỏ sót.
+              # Don't use `git grep -E`: BSD/macOS ERE has no `\b` → matches would be missed.
               files = subprocess.run(["git", "-c", "core.quotePath=false", "ls-files", "-z", "--", *specs],
                                      capture_output=True, text=True, check=True).stdout.split("\0")
               for f in filter(None, files):
@@ -122,8 +122,8 @@ jobs:
                   except (IsADirectoryError, FileNotFoundError):
                       pass
           for f, n in hits:
-              print(f"::error file={f},line={n}::Biến có prefix public nhưng tên giống secret, sẽ lộ ra trình duyệt.")
-          print("OK" if not hits else f"{len(hits)} vi phạm")
+              print(f"::error file={f},line={n}::Variable has a public prefix but a secret-like name; it will be exposed to the browser.")
+          print("OK" if not hits else f"{len(hits)} violation(s)")
           sys.exit(1 if hits else 0)
           # ---- public-env:end ----
           PY
@@ -138,7 +138,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Trivy filesystem scan (PR và base)
+      - name: Trivy filesystem scan (PR and base)
         env:
           TRIVY_VERSION: ${{ inputs.trivy_version }}
           SEVERITY: ${{ inputs.fail_severity }}
@@ -146,7 +146,7 @@ jobs:
           FAIL_ON: ${{ inputs.fail_on }}
         run: |
           out="$RUNNER_TEMP/trivy"; mkdir -p "$out" "$RUNNER_TEMP/trivy-cache"
-          # --config trỏ vào file rỗng: không để trivy.yaml trong PR tự tắt/bỏ qua file khi quét chính nó
+          # --config points to an empty file: a trivy.yaml in the PR must not disable/skip files when scanning itself
           : > "$out/empty.yaml"
           args=(fs --config /out/empty.yaml --scanners vuln --severity "$SEVERITY" --format json --skip-dirs node_modules --exit-code 0)
           [ "$IGNORE_UNFIXED" = "true" ] && args+=(--ignore-unfixed)
@@ -156,12 +156,12 @@ jobs:
           }
           scan "$PWD" head.json
           if [ -n "$BASE_SHA" ] && [ "$FAIL_ON" = "new" ]; then
-            # Quét lockfile của base để chỉ chặn CVE do PR đưa vào; CVE có sẵn chỉ báo cáo
+            # Scan the base lockfile so only CVEs introduced by the PR block; pre-existing CVEs are only reported
             git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
             scan "$RUNNER_TEMP/base" base.json
           fi
 
-      - name: Báo cáo + quyết định
+      - name: Report + verdict
         env:
           SEV: ${{ inputs.fail_severity }}
         run: |
@@ -176,7 +176,7 @@ jobs:
                       for r in data.get("Results") or [] for v in r.get("Vulnerabilities") or []]
           rows = sorted(rows_of(os.path.join(out, "head.json")), key=lambda x: (x[0] != "CRITICAL", x[1], x[2]))
           base_path = os.path.join(out, "base.json")
-          # Đếm theo số lần (không phải tập hợp): thêm bản thứ hai của cùng package + CVE vẫn là lỗi mới
+          # Count occurrences (not a set): adding a second copy of the same package + CVE is still a new finding
           left = Counter((t, p, vid) for _, t, p, _, _, vid in rows_of(base_path)) if os.path.exists(base_path) else None
           new, old = [], []
           for r in rows:
@@ -186,19 +186,19 @@ jobs:
                   old.append(r)
               else:
                   new.append(r)
-          table = lambda rs: "| Mức | File | Package | Đang dùng | Bản vá | ID |\n|---|---|---|---|---|---|\n" + "".join("| " + " | ".join(r) + " |\n" for r in rs[:50]) + (f"\n…và {len(rs)-50} mục khác\n" if len(rs) > 50 else "")
+          table = lambda rs: "| Severity | File | Package | Installed | Fixed in | ID |\n|---|---|---|---|---|---|\n" + "".join("| " + " | ".join(r) + " |\n" for r in rs[:50]) + (f"\n…and {len(rs)-50} more\n" if len(rs) > 50 else "")
           with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as s:
               sev = os.environ.get("SEV", "HIGH,CRITICAL")
               if left is None:
-                  s.write(f"### Dependencies: {len(rows)} lỗ hổng ({sev})\n\n" + (table(rows) if rows else ""))
+                  s.write(f"### Dependencies: {len(rows)} vulnerabilities ({sev})\n\n" + (table(rows) if rows else ""))
               else:
-                  s.write(f"### Dependencies: {len(new)} lỗ hổng MỚI do PR, {len(old)} có sẵn từ base ({sev})\n\n")
-                  if new: s.write("**Mới (chặn):**\n\n" + table(new) + "\n")
-                  if old: s.write(f"<details><summary>Nợ có sẵn (không chặn): {len(old)}</summary>\n\n" + table(old) + "\n</details>\n")
+                  s.write(f"### Dependencies: {len(new)} NEW vulnerabilities from this PR, {len(old)} pre-existing on base ({sev})\n\n")
+                  if new: s.write("**New (blocking):**\n\n" + table(new) + "\n")
+                  if old: s.write(f"<details><summary>Pre-existing debt (not blocking): {len(old)}</summary>\n\n" + table(old) + "\n</details>\n")
           for sev, target, pkg, inst, fix, vid in new:
-              print(f"::error file={target}::{vid} {sev} {pkg}@{inst} → nâng lên {fix}")
+              print(f"::error file={target}::{vid} {sev} {pkg}@{inst} → upgrade to {fix}")
           if old:
-              print(f"::warning::{len(old)} lỗ hổng có sẵn từ trước (không chặn PR này). Xem summary và report hằng tuần.")
+              print(f"::warning::{len(old)} pre-existing vulnerabilit{'y' if len(old) == 1 else 'ies'} (not blocking this PR). See the summary and the weekly report.")
           sys.exit(1 if new else 0)
           # ---- trivy-vuln:end ----
           PY
@@ -223,6 +223,6 @@ jobs:
         run: |
           args=(scan --metrics=off --error --severity "$SEVERITY" --exclude node_modules)
           for c in $CONFIGS; do args+=(--config "$c"); done
-          # Trên PR: chỉ fail với finding mới so với base, không bắt sửa nợ cũ
+          # On PRs: only fail on findings new relative to base; existing debt doesn't have to be fixed
           [ -n "$BASE_SHA" ] && args+=(--baseline-commit "$BASE_SHA")
           pipx run --spec "semgrep==${SEMGREP_VERSION}" semgrep "${args[@]}"

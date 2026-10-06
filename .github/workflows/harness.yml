@@ -1,15 +1,15 @@
-# Reusable: gate của harness. Gọi SAU các job check (needs) với if: always().
-# Required check trên ruleset: "harness / gate".
-#   - Reject: check đỏ + sticky comment liệt kê lỗi (lấy từ annotation của mọi job trong run).
-#   - Đạt: bot approve nếu rủi ro thấp, bật auto-merge (GitHub merge khi đủ required checks + review).
-#   - AI review (tuỳ chọn, review.ai: true trong .github/harness.yml): chỉ có quyền chặn.
+# Reusable: the harness gate. Call it AFTER the check jobs (needs) with if: always().
+# Required check in the ruleset: "harness / gate".
+#   - Reject: red check + sticky comment listing errors (taken from annotations of every job in the run).
+#   - Pass: bot approves if low-risk, enables auto-merge (GitHub merges once required checks + reviews pass).
+#   - AI review (optional, review.ai: true in .github/harness.yml): can only block.
 name: harness
 
 on:
   workflow_call:
     inputs:
       results:
-        description: toJSON(needs) của caller
+        description: toJSON(needs) from the caller
         type: string
         default: "{}"
       harness_ref:
@@ -28,17 +28,17 @@ on:
 
 jobs:
   gate:
-    # Chỉ run của PR/merge queue mới mang đúng tên required check "harness / gate".
-    # Run từ push/schedule/"Run workflow" thành "harness / gate (push)"… nên không làm xanh check của PR được.
+    # Only PR/merge queue runs carry the exact required check name "harness / gate".
+    # Runs from push/schedule/"Run workflow" become "harness / gate (push)"… so they cannot turn a PR's check green.
     name: ${{ contains(fromJSON('["pull_request","merge_group"]'), github.event_name) && 'gate' || format('gate ({0})', github.event_name) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write        # bật auto-merge khi không dùng GitHub App
+      contents: write        # enable auto-merge when no GitHub App is used
       pull-requests: write   # comment, review
-      actions: read          # đọc job + annotation của run
+      actions: read          # read the run's jobs + annotations
       checks: read
-      issues: read           # ai gắn label override
+      issues: read           # who applied the override label
     env:
       HARNESS_APP_CLIENT_ID: ${{ vars.HARNESS_APP_CLIENT_ID }}
       HAS_APP_KEY: ${{ secrets.HARNESS_APP_PRIVATE_KEY != '' }}
@@ -46,7 +46,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: repo
-          fetch-depth: 0 # policy + ARCHITECTURE.md đọc từ commit base
+          fetch-depth: 0 # policy + ARCHITECTURE.md are read from the base commit
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,9 +59,9 @@ jobs:
           persist-credentials: false
       - run: mv .harness "$RUNNER_TEMP/harness"
 
-      # Approve/merge bằng GitHub App (khuyên dùng): merge do App thực hiện vẫn kích hoạt workflow trên main,
-      # còn merge bằng GITHUB_TOKEN thì không. App cần: Contents R/W, Pull requests R/W.
-      - name: Token GitHub App
+      # Approve/merge via a GitHub App (recommended): merges made by the App still trigger workflows on main,
+      # while merges made with GITHUB_TOKEN do not. The App needs: Contents R/W, Pull requests R/W.
+      - name: GitHub App token
         id: app
         if: env.HARNESS_APP_CLIENT_ID != '' && env.HAS_APP_KEY == 'true' && github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0

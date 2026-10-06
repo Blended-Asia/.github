@@ -1,6 +1,6 @@
-# Reusable: kiểm tra Vercel Preview sau khi deploy xong (trigger: deployment_status).
-# Không cần token Vercel. Nếu preview bật Deployment Protection, tạo
-# "Protection Bypass for Automation" trong Vercel và lưu vào secret VERCEL_AUTOMATION_BYPASS_SECRET.
+# Reusable: checks a Vercel Preview once it has deployed (trigger: deployment_status).
+# No Vercel token needed. If the preview has Deployment Protection enabled, create a
+# "Protection Bypass for Automation" in Vercel and store it in the VERCEL_AUTOMATION_BYPASS_SECRET secret.
 name: vercel-preview
 
 on:
@@ -10,11 +10,11 @@ on:
         type: string
         required: true
       paths:
-        description: Các trang cần kiểm tra header
+        description: Pages whose headers are checked
         type: string
         default: /
       fail_on_missing_recommended:
-        description: Fail luôn khi thiếu CSP / Referrer-Policy / Permissions-Policy
+        description: Also fail when CSP / Referrer-Policy / Permissions-Policy is missing
         type: boolean
         default: false
     secrets:
@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Kiểm tra security headers + đường dẫn nhạy cảm
+      - name: Check security headers + sensitive paths
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           URL: ${{ inputs.url }}
@@ -51,7 +51,7 @@ jobs:
             for (const p of process.env.PATHS.split(',').map((s) => s.trim()).filter(Boolean)) {
               const r = await get(p);
               if (r.status === 401 || r.status === 403) {
-                errors.push(`${p}: HTTP ${r.status}, preview đang bị Deployment Protection chặn. Thêm secret VERCEL_AUTOMATION_BYPASS_SECRET.`);
+                errors.push(`${p}: HTTP ${r.status}, the preview is blocked by Deployment Protection. Add the VERCEL_AUTOMATION_BYPASS_SECRET secret.`);
                 continue;
               }
               if (r.status >= 400) { errors.push(`${p}: HTTP ${r.status}`); continue; }
@@ -60,19 +60,19 @@ jobs:
               const checks = [
                 ['Strict-Transport-Security', !!h('strict-transport-security'), true],
                 ['X-Content-Type-Options: nosniff', (h('x-content-type-options') ?? '').toLowerCase() === 'nosniff', true],
-                ['Chống clickjacking (X-Frame-Options hoặc CSP frame-ancestors)', !!h('x-frame-options') || /frame-ancestors/i.test(csp), true],
+                ['Clickjacking protection (X-Frame-Options or CSP frame-ancestors)', !!h('x-frame-options') || /frame-ancestors/i.test(csp), true],
                 ['Content-Security-Policy', !!csp, strict],
                 ['Referrer-Policy', !!h('referrer-policy'), strict],
                 ['Permissions-Policy', !!h('permissions-policy'), strict],
-                ['Không lộ X-Powered-By', !h('x-powered-by'), false],
+                ['No X-Powered-By exposed', !h('x-powered-by'), false],
               ];
               for (const [name, ok, required] of checks) {
                 rows.push(`| ${ok ? '✅' : required ? '❌' : '⚠️'} | \`${p}\` | ${name} |`);
-                if (!ok) (required ? errors : warns).push(`${p}: thiếu ${name}`);
+                if (!ok) (required ? errors : warns).push(`${p}: missing ${name}`);
               }
             }
 
-            // File nhạy cảm: chỉ báo khi nội dung trả về đúng là file đó (tránh false positive do SPA fallback)
+            // Sensitive files: only report when the response really is that file (avoids false positives from SPA fallbacks)
             const sensitive = [
               ['/.env', /^[A-Z_][A-Z0-9_]*=/m],
               ['/.env.local', /^[A-Z_][A-Z0-9_]*=/m],
@@ -84,16 +84,16 @@ jobs:
             for (const [p, sig] of sensitive) {
               const r = await get(p, 'manual');
               const leaked = r.status === 200 && sig.test(await r.text());
-              rows.push(`| ${leaked ? '❌' : '✅'} | \`${p}\` | Không public file nhạy cảm |`);
-              if (leaked) errors.push(`${p} đang public trên preview!`);
+              rows.push(`| ${leaked ? '❌' : '✅'} | \`${p}\` | Sensitive file not public |`);
+              if (leaked) errors.push(`${p} is publicly accessible on the preview!`);
             }
 
             await core.summary
-              .addRaw(`### Vercel preview: ${base.origin}\n\n| | Path | Kiểm tra |\n|---|---|---|\n${rows.join('\n')}\n`)
+              .addRaw(`### Vercel preview: ${base.origin}\n\n| | Path | Check |\n|---|---|---|\n${rows.join('\n')}\n`)
               .write();
             warns.forEach((w) => core.warning(w));
             if (errors.length) {
               errors.forEach((e) => core.error(e));
-              core.setFailed(`${errors.length} vấn đề bảo mật trên preview`);
+              core.setFailed(`${errors.length} security issue${errors.length === 1 ? '' : 's'} on the preview`);
             }
             // ---- vercel-preview:end ----

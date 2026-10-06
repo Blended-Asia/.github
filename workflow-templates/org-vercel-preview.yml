@@ -1,4 +1,4 @@
-# Do org quản lý. Chạy sau khi Vercel deploy preview thành công (check tham khảo, không bắt buộc).
+# Managed by the org. Runs after a successful Vercel preview deploy (advisory check, not required).
 name: org-vercel-preview
 
 on:

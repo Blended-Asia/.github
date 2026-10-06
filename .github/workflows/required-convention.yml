@@ -1,6 +1,6 @@
-# Chỉ dùng cho GitHub Enterprise Cloud: ruleset "Require workflows to pass" trỏ vào file này
-# (xem rulesets/org-baseline-enterprise.json). Repo con KHÔNG cần copy caller, và không sửa được.
-# Đồng thời là CI cho chính repo .github.
+# GitHub Enterprise Cloud only: the "Require workflows to pass" ruleset points at this file
+# (see rulesets/org-baseline-enterprise.json). Child repos do NOT need to copy a caller, and cannot modify it.
+# Also serves as CI for this .github repo itself.
 name: org-pr-convention
 
 on:

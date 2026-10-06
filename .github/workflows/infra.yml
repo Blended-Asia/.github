@@ -1,15 +1,15 @@
-# Reusable: infra check, tự phát hiện stack trong repo và chỉ chạy phần liên quan.
-#   docker   – Hadolint + Trivy misconfig cho Dockerfile, policy cho docker compose
-#   vercel   – validate vercel.json, chặn secret hardcode trong env legacy
-#   supabase – convention migration (tên, bất biến, thứ tự) + dựng DB local từ migrations,
-#              chạy `db lint` và Security Advisor (RLS, security definer...) + deno lint/check edge functions
+# Reusable: infra checks; auto-detects the stacks in the repo and only runs the relevant parts.
+#   docker   – Hadolint + Trivy misconfig for Dockerfiles, policy for docker compose
+#   vercel   – validate vercel.json, block hardcoded secrets in legacy env
+#   supabase – migration conventions (name, immutability, order) + spin up a local DB from migrations,
+#              run `db lint` and Security Advisor (RLS, security definer...) + deno lint/check edge functions
 name: infra
 
 on:
   workflow_call:
     inputs:
       stacks:
-        description: "auto | danh sách cố định, vd: docker,supabase"
+        description: "auto | a fixed list, e.g. docker,supabase"
         type: string
         default: auto
       # --- docker ---
@@ -20,22 +20,22 @@ on:
         type: string
         default: DL3008,DL3018
       hadolint_error_rules:
-        description: Các rule nâng lên mức error (DL3006/DL3007 tag image, DL3002 chạy bằng root)
+        description: Rules promoted to error (DL3006/DL3007 image tags, DL3002 running as root)
         type: string
         default: DL3006,DL3007,DL3002
       misconfig_severity:
         type: string
         default: HIGH,CRITICAL
       misconfig_ignore:
-        description: ID check Trivy bỏ qua (cộng thêm .trivyignore của repo)
+        description: Trivy check IDs to ignore (in addition to the repo's .trivyignore)
         type: string
         default: DS-0029
       compose_dev_files:
-        description: Regex các compose file chỉ dùng local (lỗi policy chỉ cảnh báo)
+        description: Regex of local-only compose files (policy violations are only warnings)
         type: string
         default: '(^|/)(docker-)?compose\.(dev|local|test|ci)\.ya?ml$|(^|/)(docker-)?compose\.override\.ya?ml$'
       compose_db_ports:
-        description: Port nội bộ không được publish ra 0.0.0.0
+        description: Internal ports that must not be published on 0.0.0.0
         type: string
         default: 5432,3306,6379,27017,9200,5672,11211,54322
       # --- supabase ---
@@ -46,23 +46,23 @@ on:
         type: string
         default: '^[0-9]{14}_[a-z0-9_]+\.sql$'
       migration_immutable:
-        description: Cấm sửa/xoá migration đã có trên base branch
+        description: Forbid editing/deleting migrations already on the base branch
         type: boolean
         default: true
       migration_order:
-        description: Migration mới phải có timestamp lớn hơn migration mới nhất trên base
+        description: New migrations must have a timestamp later than the newest migration on base
         type: boolean
         default: true
       supabase_db_checks:
-        description: "changed (chỉ khi PR đụng vào supabase/) | always | never"
+        description: "changed (only when the PR touches supabase/) | always | never"
         type: string
         default: changed
       advisors_fail_on:
-        description: "Mức Security Advisor làm fail: error | warn | none"
+        description: "Security Advisor level that fails the check: error | warn | none"
         type: string
         default: error
       advisors_ignore:
-        description: "cacheKey của cảnh báo Advisor đã chấp nhận (nợ cũ khi onboard), phân cách dấu phẩy/xuống dòng. Summary của job in sẵn key để copy."
+        description: "cacheKeys of accepted Advisor warnings (existing debt at onboarding), comma- or newline-separated. The job summary prints the keys ready to copy."
         type: string
         default: ""
       deno_check:
@@ -79,8 +79,8 @@ on:
 permissions:
   contents: read
 
-# Trên PR mọi check chỉ chặn lỗi MỚI: file đổi (Hadolint, compose, vercel.json, tên migration) hoặc so với base
-# (Trivy misconfig). Push/schedule (không có base) quét toàn bộ để thấy nợ.
+# On PRs every check only blocks NEW problems: in changed files (Hadolint, compose, vercel.json, migration names) or
+# relative to base (Trivy misconfig). Push/schedule (no base) scans everything to surface debt.
 env:
   BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || '' }}
 
@@ -116,7 +116,7 @@ jobs:
             [ "$supabase" = true ] && [ "$dirs" = "[]" ] && dirs='["."]'
           fi
           { echo "docker=$docker"; echo "vercel=$vercel"; echo "supabase=$supabase"; echo "supabase_dirs=$dirs"; } | tee -a "$GITHUB_OUTPUT"
-          echo "### Stack phát hiện: docker=$docker · vercel=$vercel · supabase=$supabase $dirs" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Detected stacks: docker=$docker · vercel=$vercel · supabase=$supabase $dirs" >> "$GITHUB_STEP_SUMMARY"
 
   docker:
     name: docker
@@ -130,7 +130,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Bản base để so sánh (chỉ trên PR)
+      - name: Base checkout for comparison (PRs only)
         run: |
           if [ -n "$BASE_SHA" ]; then git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"; fi
 
@@ -147,14 +147,14 @@ jobs:
           else
             mapfile -t files < <(git ls-files | grep -E "$re" || true)
           fi
-          [ ${#files[@]} -eq 0 ] && { echo "Không có Dockerfile cần kiểm tra"; exit 0; }
+          [ ${#files[@]} -eq 0 ] && { echo "No Dockerfiles to check"; exit 0; }
           out="$RUNNER_TEMP/hadolint"; mkdir -p "$out"
           args=(--format json --no-fail)
           for c in ${IGNORE//,/ }; do args+=(--ignore "$c"); done
           for c in ${ERROR_RULES//,/ }; do args+=(--error "$c"); done
           lint() { docker run --rm -v "$1:/src" -w /src "ghcr.io/hadolint/hadolint:${V}" /bin/hadolint "${args[@]}" "${@:2}"; }
           lint "$PWD" "${files[@]}" > "$out/head.json"
-          # Dockerfile cũ đã có lỗi: chỉ chặn lỗi mới so với bản base của chính file đó
+          # Existing Dockerfiles with errors: only block errors new relative to that file's base version
           if [ -d "$RUNNER_TEMP/base" ]; then
             existed=(); for f in "${files[@]}"; do [ -f "$RUNNER_TEMP/base/$f" ] && existed+=("$f"); done
             if [ ${#existed[@]} -gt 0 ]; then lint "$RUNNER_TEMP/base" "${existed[@]}" > "$out/base.json"; fi
@@ -180,7 +180,7 @@ jobs:
               bad += fail
               print(f'::{"error" if fail else "warning"} file={i["file"]},line={i["line"]},title={i["code"]}::{i["message"]}')
           if old:
-              print(f"::warning::Hadolint: {old} lỗi có sẵn từ base trong Dockerfile đã sửa (không chặn).")
+              print(f"::warning::Hadolint: {old} pre-existing issue(s) from base in edited Dockerfiles (not blocking).")
           sys.exit(1 if bad else 0)
           # ---- hadolint:end ----
           PY
@@ -192,7 +192,7 @@ jobs:
           IGNORE: ${{ inputs.misconfig_ignore }}
         run: |
           out="$RUNNER_TEMP/trivy"; mkdir -p "$out" "$RUNNER_TEMP/trivy-cache"
-          : > "$out/empty.yaml"   # bỏ qua trivy.yaml của repo (PR không tự tắt được scan)
+          : > "$out/empty.yaml"   # ignore the repo's trivy.yaml (a PR cannot disable the scan)
           scan() {
             { if [ -f "$1/.trivyignore" ]; then cat "$1/.trivyignore"; echo; fi; tr ',' '\n' <<<"$IGNORE"; } > "$out/ignore-$2"
             docker run --rm -v "$1:/src" -v "$out:/out" -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" -w /src "ghcr.io/aquasecurity/trivy:${V}" \
@@ -207,7 +207,7 @@ jobs:
           from collections import Counter
           out = os.path.join(os.environ["RUNNER_TEMP"], "trivy")
           def key(t, m):
-              # Resource phân biệt nhiều vi phạm cùng loại trong một file (vd nhiều bucket public)
+              # Resource distinguishes multiple violations of the same kind in one file (e.g. several public buckets)
               return (t, m.get("ID"), (m.get("CauseMetadata") or {}).get("Resource") or "")
           def fails(path):
               return [(r["Target"], m) for r in json.load(open(path)).get("Results") or []
@@ -227,7 +227,7 @@ jobs:
               print(f'::error file={t},line={line},title={m.get("ID")} {m["Severity"]}::{m["Title"]}: {m.get("Message","")}')
           old = len(head) - len(new)
           if old:
-              print(f"::warning::{old} misconfig có sẵn từ base (không chặn PR này).")
+              print(f"::warning::{old} pre-existing misconfig(s) from base (not blocking this PR).")
           sys.exit(1 if new else 0)
           # ---- trivy-config:end ----
           PY
@@ -242,7 +242,7 @@ jobs:
           if [ -n "$BASE_SHA" ]; then list=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA"...HEAD); else list=$(git ls-files); fi
           COMPOSE_FILES="$(grep -E "$re" <<<"$list" | tr '\n' ' ' || true)"
           export COMPOSE_FILES
-          [ -z "${COMPOSE_FILES// /}" ] && { echo "Không có compose file"; exit 0; }
+          [ -z "${COMPOSE_FILES// /}" ] && { echo "No compose files"; exit 0; }
           python3 - <<'PY'
           # ---- compose-policy:begin ----
           import json, os, re, subprocess, sys
@@ -253,7 +253,7 @@ jobs:
           counts = {"error": 0, "warning": 0}
           rows = []
           def split_colon(s):
-              # tách theo ':' nhưng bỏ qua ':' nằm trong ${...}, vd "${DB_PORT:-5432}:5432"
+              # split on ':' but ignore ':' inside ${...}, e.g. "${DB_PORT:-5432}:5432"
               parts, cur, depth = [], "", 0
               for ch in s:
                   if ch == "{": depth += 1
@@ -282,14 +282,14 @@ jobs:
               rows.append(f"| {'❌' if level == 'error' else '⚠️'} | `{f}` | {msg} |")
               print(f"::{level} file={f}::{msg}")
           def check(path, f):
-              """Danh sách (mức, vấn đề) của một compose file; f là path hiển thị (theo repo)."""
+              """List of (level, issue) for one compose file; f is the display path (relative to the repo)."""
               issues = []
               add = lambda lvl, msg: issues.append((lvl, msg))
               sev = "warning" if dev_re.search(f) else "error"
               p = subprocess.run(["docker", "compose", "-f", path, "config", "--no-interpolate",
                                   "--no-env-resolution", "--format", "json"], capture_output=True, text=True)
               if p.returncode != 0:
-                  return [("error", "compose config lỗi: " + (p.stderr.strip().splitlines() or ["?"])[-1])]
+                  return [("error", "compose config failed: " + (p.stderr.strip().splitlines() or ["?"])[-1])]
               for name, svc in (json.loads(p.stdout).get("services") or {}).items():
                   if svc.get("privileged"):
                       add(sev, f"`{name}`: privileged: true")
@@ -297,21 +297,21 @@ jobs:
                       add("warning", f"`{name}`: network_mode: host")
                   for v in svc.get("volumes") or []:
                       if v.get("source") in ("/var/run/docker.sock", "/run/docker.sock"):
-                          add("warning", f"`{name}`: mount docker.sock = quyền root trên host")
+                          add("warning", f"`{name}`: mounting docker.sock = root on the host")
                   for port in map(norm_port, svc.get("ports") or []):
                       if port.get("target") in db_ports and port.get("host_ip") in (None, "", "0.0.0.0", "::"):
-                          add(sev, f"`{name}`: publish {port.get('published')}->{port['target']} ra mọi interface "
-                                   f"(Docker bỏ qua UFW). Dùng `127.0.0.1:{port.get('published')}:{port['target']}`")
+                          add(sev, f"`{name}`: publish {port.get('published')}->{port['target']} on all interfaces "
+                                   f"(Docker bypasses UFW). Use `127.0.0.1:{port.get('published')}:{port['target']}`")
                   for k, val in norm_env(svc.get("environment")).items():
                       if val and secret_key.search(k) and "${" not in str(val):
-                          add(sev, f"`{name}`: `{k}` hardcode giá trị, dùng biến môi trường `$" + "{" + k + "}` hoặc secrets")
+                          add(sev, f"`{name}`: `{k}` hardcodes a value; use an env var `$" + "{" + k + "}` or secrets")
                   img = svc.get("image")
                   if img and not svc.get("build"):
                       last = img.split("@")[0].rsplit("/", 1)[-1]
                       if "@" not in img and (":" not in last or last.endswith(":latest")):
-                          add("warning", f"`{name}`: image `{img}` không pin version")
+                          add("warning", f"`{name}`: image `{img}` has no pinned version")
               return issues
-          # Trên PR: compose file đã có từ trước chỉ bị chặn bởi vấn đề MỚI so với bản base của chính file đó
+          # On PRs: pre-existing compose files are only blocked by issues NEW relative to that file's base version
           from collections import Counter
           base_dir = os.environ.get("BASE_DIR", "")
           legacy = 0
@@ -325,11 +325,11 @@ jobs:
                   else:
                       emit(lvl, f, msg)
           if legacy:
-              print(f"::warning::Compose: {legacy} vấn đề có sẵn từ base (không chặn).")
+              print(f"::warning::Compose: {legacy} pre-existing issue(s) from base (not blocking).")
           with open(os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null"), "a") as s:
-              s.write(f"### Compose policy: {counts['error']} lỗi, {counts['warning']} cảnh báo\n\n")
+              s.write(f"### Compose policy: {counts['error']} error(s), {counts['warning']} warning(s)\n\n")
               if rows:
-                  s.write("| | File | Vấn đề |\n|---|---|---|\n" + "\n".join(rows) + "\n")
+                  s.write("| | File | Issue |\n|---|---|---|\n" + "\n".join(rows) + "\n")
           sys.exit(1 if counts["error"] else 0)
           # ---- compose-policy:end ----
           PY
@@ -345,13 +345,13 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Validate vercel.json + chặn secret hardcode
+      - name: Validate vercel.json + block hardcoded secrets
         run: |
           if [ -n "$BASE_SHA" ]; then list=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA"...HEAD); else list=$(git ls-files); fi
           mapfile -t files < <(grep -E '(^|/)vercel\.json$' <<<"$list" || true)
-          [ ${#files[@]} -eq 0 ] && { echo "Không có vercel.json cần kiểm tra"; exit 0; }
-          # Schema chính thức của Vercel không qua được metaschema check của check-jsonschema,
-          # nên validate trực tiếp bằng thư viện jsonschema.
+          [ ${#files[@]} -eq 0 ] && { echo "No vercel.json files to check"; exit 0; }
+          # Vercel's official schema fails check-jsonschema's metaschema check,
+          # so validate directly with the jsonschema library.
           python3 -m venv "$RUNNER_TEMP/venv" && "$RUNNER_TEMP/venv/bin/pip" install -q jsonschema==4.26.0
           "$RUNNER_TEMP/venv/bin/python" - "${files[@]}" <<'PY'
           # ---- vercel-json:begin ----
@@ -365,7 +365,7 @@ jobs:
               try:
                   cfg = json.load(open(f))
               except json.JSONDecodeError as e:
-                  print(f"::error file={f},line={e.lineno}::JSON lỗi: {e.msg}")
+                  print(f"::error file={f},line={e.lineno}::Invalid JSON: {e.msg}")
                   bad += 1
                   continue
               for err in Validator(schema).iter_errors(cfg):
@@ -376,8 +376,8 @@ jobs:
                   for k, v in (env or {}).items():
                       if key.search(k) and not str(v).startswith("@"):
                           bad += 1
-                          print(f"::error file={f},title=vercel.json {scope}::{k} để giá trị thật trong repo. Chuyển sang Vercel Environment Variables.")
-          print("OK" if not bad else f"{bad} lỗi")
+                          print(f"::error file={f},title=vercel.json {scope}::{k} has a real value committed to the repo. Move it to Vercel Environment Variables.")
+          print("OK" if not bad else f"{bad} error(s)")
           sys.exit(1 if bad else 0)
           # ---- vercel-json:end ----
           PY
@@ -409,10 +409,10 @@ jobs:
           DIR: ${{ matrix.dir }}
         run: |
           mig=supabase/migrations
-          [ -d "$mig" ] || { echo "Chưa có $mig"; exit 0; }
+          [ -d "$mig" ] || { echo "No $mig yet"; exit 0; }
           p="${DIR#./}"; [ "$p" = "." ] && p="" || p="${p%/}/"
           rc=0
-          # Tên migration: PR chỉ xét file mới thêm (migration cũ đặt tên khác chuẩn không chặn mọi PR)
+          # Migration names: PRs only check newly added files (old, non-conforming names don't block every PR)
           if [ -n "$BASE_SHA" ]; then
             names=$(git diff --relative --name-only --diff-filter=A --no-renames "$BASE_SHA"...HEAD -- "$mig" | grep -E '\.sql$' || true)
           else
@@ -421,7 +421,7 @@ jobs:
           while read -r f; do
             [ -z "$f" ] && continue
             n=$(basename "$f")
-            [[ "$n" =~ $PATTERN ]] || { echo "::error file=$p$f::Tên migration '$n' không khớp $PATTERN (dùng: supabase migration new <ten_snake_case>)"; rc=1; }
+            [[ "$n" =~ $PATTERN ]] || { echo "::error file=$p$f::Migration name '$n' does not match $PATTERN (use: supabase migration new <snake_case_name>)"; rc=1; }
           done <<<"$names"
 
           if [ -n "$BASE_SHA" ]; then
@@ -431,19 +431,19 @@ jobs:
               case "$st" in
                 M|D|T)
                   if [ "$IMMUTABLE" = "true" ]; then
-                    echo "::error file=$p$f::Migration đã có trên base branch không được sửa/xoá. Tạo migration mới để thay đổi."; rc=1
+                    echo "::error file=$p$f::Migrations already on the base branch must not be edited/deleted. Create a new migration instead."; rc=1
                   fi ;;
                 A)
                   ts=$(basename "$f" | grep -oE '^[0-9]{14}' || true)
                   if [ "$ORDER" = "true" ] && [ -n "$ts" ] && [ -n "$latest" ] && [[ ! "$ts" > "$latest" ]]; then
-                    echo "::error file=$p$f::Timestamp $ts <= migration mới nhất trên base ($latest). Rebase rồi đổi tên với timestamp mới."; rc=1
+                    echo "::error file=$p$f::Timestamp $ts <= newest migration on base ($latest). Rebase, then rename it with a new timestamp."; rc=1
                   fi ;;
               esac
             done < <(git diff --relative --name-status --no-renames "$BASE_SHA"...HEAD -- "$mig" | grep -E '\.sql$' || true)
           fi
           exit $rc
 
-      - name: Cần dựng DB?
+      - name: Need a DB?
         id: need
         env:
           MODE: ${{ inputs.supabase_db_checks }}
@@ -459,7 +459,7 @@ jobs:
         with:
           version: ${{ inputs.supabase_cli_version }}
 
-      - name: Dựng Postgres local từ migrations + seed
+      - name: Start local Postgres from migrations + seed
         if: steps.need.outputs.run == 'true'
         run: supabase db start
 
@@ -480,7 +480,7 @@ jobs:
           data = json.load(open(os.path.join(os.environ["RUNNER_TEMP"], "advisors.json")))
           ignore = {x.strip() for x in re.split(r"[,\s]+", os.environ.get("IGNORE", "")) if x.strip()}
           rank = {"info": 1, "warn": 2, "error": 3}
-          threshold = rank.get(os.environ.get("FAIL_ON", "error").lower(), 99)  # none → không chặn
+          threshold = rank.get(os.environ.get("FAIL_ON", "error").lower(), 99)  # none → never blocks
           blocking, accepted, rest = [], [], []
           for r in data.get("results") or []:
               if r.get("cacheKey") in ignore:
@@ -496,17 +496,17 @@ jobs:
           seen = {r.get("cacheKey") for r in data.get("results") or []}
           fixed = sorted(ignore - seen)
           with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as s:
-              s.write(f"### Supabase Security Advisor: {len(blocking)} chặn, {len(rest)} cảnh báo, {len(accepted)} nợ đã chấp nhận\n\n")
+              s.write(f"### Supabase Security Advisor: {len(blocking)} blocking, {len(rest)} warning(s), {len(accepted)} accepted debt\n\n")
               if blocking:
-                  s.write("Nợ có sẵn khi onboard thì thêm vào `advisors_ignore` của caller (và mở issue để sửa):\n\n```\n"
+                  s.write("For pre-existing debt at onboarding, add these to the caller's `advisors_ignore` (and open an issue to fix them):\n\n```\n"
                           + "\n".join(r["cacheKey"] for r in blocking) + "\n```\n")
               if fixed:
-                  s.write("Đã sửa xong, xoá khỏi `advisors_ignore`: " + ", ".join(f"`{k}`" for k in fixed) + "\n")
+                  s.write("Fixed; remove from `advisors_ignore`: " + ", ".join(f"`{k}`" for k in fixed) + "\n")
           sys.exit(1 if blocking else 0)
           # ---- advisors:end ----
           PY
 
-      - name: Có edge functions?
+      - name: Has edge functions?
         id: fn
         env:
           DENO_CHECK: ${{ inputs.deno_check }}

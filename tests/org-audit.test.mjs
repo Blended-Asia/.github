@@ -21,8 +21,8 @@ const REQUIRED = { type: 'required_status_checks', parameters: { required_status
 let calls;
 let routes;
 
-// Log của org-audit (có ký tự nhiều byte) thỉnh thoảng làm runner của node:test lỗi
-// "Unable to deserialize cloned data" khi chạy song song nhiều file → nuốt log trong file test này.
+// org-audit's log (multi-byte characters) occasionally makes the node:test runner fail with
+// "Unable to deserialize cloned data" when running many files in parallel → swallow logs in this test file.
 const realLog = console.log;
 before(() => { console.log = () => {}; });
 after(() => { console.log = realLog; });
@@ -63,7 +63,7 @@ beforeEach(() => {
   };
   routes = [
     ['GET', /^\/orgs\/acme\/repos/, () => [
-      repo('leaky', { visibility: 'public' }), // listing không có security_and_analysis
+      repo('leaky', { visibility: 'public' }), // listing has no security_and_analysis
       repo('compliant'), repo('old-ref'), repo('tampered'), repo('classic'),
       repo('archived', { archived: true }), repo('empty'), repo('.github'),
     ]],
@@ -122,7 +122,7 @@ const env = (extra = {}) => ({ ORG: 'acme', GH_TOKEN: 't', OUT_DIR: mkdtempSync(
 const byName = (results) => Object.fromEntries(results.map((r) => [r.name, r]));
 const has = (r, level, re) => r.findings.some((f) => f.level === level && re.test(f.msg));
 
-test('helpers: normalizeCaller bỏ qua with:/comment/ref/org', () => {
+test('helpers: normalizeCaller ignores with:/comments/ref/org', () => {
   const a = 'jobs:\n  x:\n    uses: acme/.github/.github/workflows/security.yml@v1 # pin\n    with:\n      semgrep: false\n';
   const b = '# managed\njobs:\n  x:\n    uses: other/.github/.github/workflows/security.yml@v9\n';
   assert.equal(normalizeCaller(a), normalizeCaller(b));
@@ -130,15 +130,15 @@ test('helpers: normalizeCaller bỏ qua with:/comment/ref/org', () => {
   assert.deepEqual(callerOverrides(a), { semgrep: 'false' });
 });
 
-test('helpers: CODEOWNERS lấy dòng khớp cuối cùng', () => {
+test('helpers: CODEOWNERS uses the last matching line', () => {
   const f = '.github/workflows/org-harness.yml';
   assert.deepEqual(codeownersFor('* @a\n/.github/workflows/ @p\n', f), ['@p']);
-  assert.deepEqual(codeownersFor('/.github/ @p\n*.yml\n', f), []); // dòng sau gỡ owner
+  assert.deepEqual(codeownersFor('/.github/ @p\n*.yml\n', f), []); // later line removes the owner
   assert.deepEqual(codeownersFor('*.js @fe\ndocs/ @d\n', f), []);
   assert.deepEqual(codeownersFor('.github/** @p\n', f), ['@p']);
 });
 
-test('audit: phân loại đúng từng repo', async () => {
+test('audit: classifies each repo correctly', async () => {
   const e = env();
   const { results, md, critical } = await main(e);
   const by = byName(results);
@@ -153,36 +153,36 @@ test('audit: phân loại đúng từng repo', async () => {
   assert.deepEqual(by.leaky.stacks, ['docker', 'supabase', 'vercel', 'next']);
   assert.ok(has(by.leaky, 'critical', /apps\/web\/\.env\.production/));
   assert.ok(!by.leaky.findings.some((f) => /\.env\.example/.test(f.msg)));
-  assert.ok(has(by.leaky, 'high', /push protection/), 'phải GET repo khi listing thiếu security_and_analysis');
+  assert.ok(has(by.leaky, 'high', /push protection/), 'must GET the repo when the listing lacks security_and_analysis');
   assert.ok(critical);
 
   const old = by['old-ref'];
   assert.deepEqual([old.checks.harness, old.checks.convention, old.checks.protection, old.checks.codeowners], ['warn', 'warn', 'warn', 'warn']);
   assert.ok(has(old, 'warn', /Override .*semgrep=false/));
-  assert.ok(has(old, 'info', /tên tự đặt/));
-  assert.ok(has(old, 'warn', /harness\.yml` nới lỏng: tắt rule react\/no-ts-ignore; tắt react\.prettier; bot tự approve PR tới 2000 dòng/));
-  assert.ok(!by.compliant.findings.some((f) => /nới lỏng/.test(f.msg)));
+  assert.ok(has(old, 'info', /custom file name/));
+  assert.ok(has(old, 'warn', /harness\.yml` loosens checks: disables rule react\/no-ts-ignore; disables react\.prettier; bot auto-approves PRs up to 2000 lines/));
+  assert.ok(!by.compliant.findings.some((f) => /loosens checks/.test(f.msg)));
 
   const t = by.tampered;
   assert.equal(t.checks.harness, 'warn');
   assert.equal(t.checks.convention, 'pass');
-  assert.ok(has(t, 'high', /org-harness\.yml` khác template/));
+  assert.ok(has(t, 'high', /org-harness\.yml` differs from the template/));
   assert.ok(has(t, 'warn', /stacks=docker/));
-  assert.ok(has(t, 'info', /chế độ quan sát/));
+  assert.ok(has(t, 'info', /observe mode/));
 
   const c = by.classic;
-  assert.equal(c.checks.protection, 'pass', 'branch protection kiểu cũ có đủ PR + 2 check');
-  assert.ok(!has(c, 'high', /khác template/), '`with:` hợp lệ không bị tính là drift');
+  assert.equal(c.checks.protection, 'pass', 'classic branch protection with PR + both checks');
+  assert.ok(!has(c, 'high', /differs from the template/), 'a valid `with:` is not counted as drift');
 
-  assert.match(md, /\*\*2\/5\*\* repo đạt chuẩn/); // compliant + classic
-  assert.match(md, /\*\*1\*\* repo đang ở chế độ quan sát/);
-  assert.match(md, /Cần xử lý ngay/);
+  assert.match(md, /\*\*2\/5\*\* repos fully compliant/); // compliant + classic
+  assert.match(md, /\*\*1\*\* repos in observe mode/);
+  assert.match(md, /Needs immediate action/);
   const json = JSON.parse(readFileSync(path.join(e.OUT_DIR, 'report.json'), 'utf8'));
   assert.ok(!('workflowFiles' in json[0]));
-  assert.ok(!calls.some((x) => x.method !== 'GET'), 'dry-run không được ghi');
+  assert.ok(!calls.some((x) => x.method !== 'GET'), 'dry-run must not write');
 });
 
-test('fix: thêm đủ file, reset branch cũ, bump ref giữ config, không đè caller bị sửa', async () => {
+test('fix: adds all files, resets stale branch, bumps ref keeping config, does not overwrite modified callers', async () => {
   const { results } = await main(env({ FIX: 'true', PLATFORM_OWNERS: '@acme/platform' }));
   const by = byName(results);
   const puts = (name) => calls.filter((c) => c.method === 'PUT' && c.path.includes(`/${name}/`));
@@ -204,9 +204,9 @@ test('fix: thêm đủ file, reset branch cũ, bump ref giữ config, không đ�
   assert.match(bumped, /security\.yml@v1[\s\S]+semgrep: false[\s\S]+pr-convention\.yml@v1/);
   assert.doesNotMatch(bumped, /@v0/);
 
-  assert.deepEqual(putPaths('tampered'), ['.github/CODEOWNERS', '.github/pull_request_template.md'], 'caller bị sửa chỉ báo cáo, không tự đè');
+  assert.deepEqual(putPaths('tampered'), ['.github/CODEOWNERS', '.github/pull_request_template.md'], 'modified callers are only reported, never overwritten');
   assert.equal(puts('compliant').length, 0);
-  assert.ok(!calls.some((c) => c.method === 'PATCH' && !c.path.includes('/leaky/')), 'branch mới tạo được thì không reset');
+  assert.ok(!calls.some((c) => c.method === 'PATCH' && !c.path.includes('/leaky/')), 'a newly created branch is not reset');
 
   const prs = calls.filter((c) => c.method === 'POST' && c.path.endsWith('/pulls'));
   assert.deepEqual(prs.map((p) => p.path.split('/')[3]).sort(), ['classic', 'leaky', 'old-ref', 'tampered']);
@@ -218,7 +218,7 @@ test('fix: thêm đủ file, reset branch cũ, bump ref giữ config, không đ�
   assert.equal(by.leaky.prUrl, 'https://github.com/acme/leaky/pull/1');
 });
 
-test('fix: đã có PR mở thì không reset branch, không tạo PR trùng', async () => {
+test('fix: with an open PR, does not reset the branch or open a duplicate PR', async () => {
   routes.unshift(['GET', /\/repos\/acme\/leaky\/pulls\?state=open/, () => [{ html_url: 'https://github.com/acme/leaky/pull/9' }]]);
   const { results } = await main(env({ FIX: 'true', ONLY: 'leaky' }));
   assert.equal(results[0].prUrl, 'https://github.com/acme/leaky/pull/9');
@@ -226,7 +226,7 @@ test('fix: đã có PR mở thì không reset branch, không tạo PR trùng', a
   assert.ok(!calls.some((c) => c.method === 'POST' && c.path.endsWith('/pulls')));
 });
 
-test('ONLY + GUARD_REF mới → repo đang v1 thành ref cũ, fix chỉ bump ref', async () => {
+test('ONLY + new GUARD_REF → repos on v1 become old ref, fix only bumps the ref', async () => {
   const { results } = await main(env({ ONLY: 'compliant', GUARD_REF: 'v2' }));
   assert.equal(results.length, 1);
   assert.equal(results[0].checks.harness, 'warn');
@@ -234,7 +234,7 @@ test('ONLY + GUARD_REF mới → repo đang v1 thành ref cũ, fix chỉ bump re
   for (const f of results[0].fixes) assert.doesNotMatch(f.content, /@v1\b/);
 });
 
-test('QUIET: không in tên repo ra log, không ghi step summary', async () => {
+test('QUIET: does not print repo names to the log or write the step summary', async () => {
   const lines = [];
   const orig = [console.log, console.error];
   console.log = console.error = (...a) => lines.push(a.join(' '));
@@ -242,7 +242,7 @@ test('QUIET: không in tên repo ra log, không ghi step summary', async () => {
     routes.unshift(['GET', /\/repos\/acme\/old-ref\/git\/trees/, () => [500, { message: 'boom' }]]);
     const e = env({ QUIET: 'true', GITHUB_STEP_SUMMARY: path.join(mkdtempSync(path.join(tmpdir(), 's-')), 'sum') });
     const { md } = await main(e);
-    assert.match(md, /Lỗi khi quét/);
+    assert.match(md, /Error while scanning/);
     assert.ok(!lines.some((l) => /leaky|old-ref|compliant/.test(l)), lines.join('\n'));
     assert.throws(() => readFileSync(e.GITHUB_STEP_SUMMARY));
   } finally {
@@ -250,7 +250,7 @@ test('QUIET: không in tên repo ra log, không ghi step summary', async () => {
   }
 });
 
-test('git-flow: audit + adoption PR trên develop; starter harness.yml có gate.branches [develop]', async () => {
+test('git-flow: audit + adoption PR on develop; starter harness.yml has gate.branches [develop]', async () => {
   const devFiles = { '.github/workflows/org-harness.yml': tpl('org-harness.yml').replace('[main]', '[develop]') };
   routes.unshift(
     ['GET', /^\/orgs\/acme\/repos/, () => [repo('flow')]],
@@ -268,12 +268,12 @@ test('git-flow: audit + adoption PR trên develop; starter harness.yml có gate.
   const { results } = await main(env({ FIX: 'true' }));
   const r = byName(results).flow;
   assert.equal(r.branch, 'develop');
-  assert.ok(r.stacks.includes('rails'), 'đọc cây file của develop');
-  assert.equal(r.checks.harness, 'pass', 'org-harness trên develop đúng template');
+  assert.ok(r.stacks.includes('rails'), 'reads the develop file tree');
+  assert.equal(r.checks.harness, 'pass', 'org-harness on develop matches the template');
   assert.equal(r.checks.convention, 'fail');
-  assert.ok(!has(r, 'high', /khác template/), 'caller trên develop với push: [develop] không bị coi là bị sửa');
-  assert.ok(has(r, 'info', /Audit trên nhánh `develop`/));
-  assert.ok(calls.some((c) => c.method === 'GET' && /rules\/branches\/develop$/.test(c.path)), 'kiểm tra bảo vệ nhánh develop');
+  assert.ok(!has(r, 'high', /differs from the template/), 'a caller on develop with push: [develop] is not treated as modified');
+  assert.ok(has(r, 'info', /Audited branch `develop`/));
+  assert.ok(calls.some((c) => c.method === 'GET' && /rules\/branches\/develop$/.test(c.path)), 'checks protection of the develop branch');
   const pr = calls.find((c) => c.method === 'POST' && /\/pulls$/.test(c.path));
   assert.equal(pr.body.base, 'develop');
   assert.equal(calls.find((c) => c.method === 'POST' && /git\/refs$/.test(c.path)).body.sha, 'dev123');
@@ -284,7 +284,7 @@ test('git-flow: audit + adoption PR trên develop; starter harness.yml có gate.
   assert.match(conv, /acme\/\.github/);
 });
 
-test('git-flow: gate.branches trong harness.yml quyết định nhánh làm việc (ưu tiên hơn đoán theo develop)', async () => {
+test('git-flow: gate.branches in harness.yml decides the working branch (takes precedence over guessing develop)', async () => {
   routes.unshift(
     ['GET', /^\/orgs\/acme\/repos/, () => [repo('rel')]],
     ['GET', /\/repos\/acme\/rel\/branches\/develop$/, () => [404, null]],

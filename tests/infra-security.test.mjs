@@ -12,7 +12,7 @@ const I = inputDefaults(infra);
 const S = inputDefaults(security);
 
 // ---------- detect ----------
-test('detect: phát hiện docker/vercel/supabase (kể cả monorepo)', () => {
+test('detect: finds docker/vercel/supabase (including monorepos)', () => {
   const repo = gitRepo({
     'apps/api/Dockerfile': 'FROM node:22\n',
     'apps/web/vercel.json': '{}',
@@ -27,13 +27,13 @@ test('detect: phát hiện docker/vercel/supabase (kể cả monorepo)', () => {
   assert.deepEqual(JSON.parse(r.outputs.supabase_dirs).sort(), ['.', 'services/billing']);
 });
 
-test('detect: repo không có stack nào', () => {
+test('detect: repo with no stacks', () => {
   const repo = gitRepo({ 'README.md': '# hi' });
   const r = bash(runBlock(infra, 'id: d'), { cwd: repo.dir, env: { STACKS: 'auto' } });
   assert.deepEqual([r.outputs.docker, r.outputs.vercel, r.outputs.supabase, r.outputs.supabase_dirs], ['false', 'false', 'false', '[]']);
 });
 
-test('detect: stacks cố định ghi đè auto', () => {
+test('detect: a fixed stacks list overrides auto', () => {
   const repo = gitRepo({ 'Dockerfile': 'FROM x\n' });
   const r = bash(runBlock(infra, 'id: d'), { cwd: repo.dir, env: { STACKS: 'supabase' } });
   assert.deepEqual([r.outputs.docker, r.outputs.supabase, r.outputs.supabase_dirs], ['false', 'true', '["."]']);
@@ -51,7 +51,7 @@ function migRepo() {
 const migEnv = (base) => ({ PATTERN: I.migration_name_pattern, IMMUTABLE: 'true', ORDER: 'true', DIR: '.', BASE_SHA: base });
 const migScript = runBlock(infra, 'Migration conventions');
 
-test('migration hợp lệ → pass', () => {
+test('valid migration → pass', () => {
   const repo = migRepo();
   repo.write({ 'supabase/migrations/20261001000000_add_c.sql': 'create table c();' });
   repo.commit('pr');
@@ -59,7 +59,7 @@ test('migration hợp lệ → pass', () => {
   assert.equal(r.code, 0, r.stdout + r.stderr);
 });
 
-test('sửa migration cũ, thêm migration sai thứ tự, sai tên → fail đủ 3 lỗi', () => {
+test('edited old migration, out-of-order migration, bad name → fails with all 3 errors', () => {
   const repo = migRepo();
   repo.write({
     'supabase/migrations/20260901000000_init.sql': 'create table a(id int);',
@@ -69,12 +69,12 @@ test('sửa migration cũ, thêm migration sai thứ tự, sai tên → fail đ�
   repo.commit('pr');
   const r = bash(migScript, { cwd: repo.dir, env: migEnv(repo.base) });
   assert.equal(r.code, 1);
-  assert.match(r.stdout, /20260901000000_init\.sql::Migration đã có trên base/);
+  assert.match(r.stdout, /20260901000000_init\.sql::Migrations already on the base branch/);
   assert.match(r.stdout, /20260905000000_late\.sql::Timestamp 20260905000000 <= .*20260910000000/);
-  assert.match(r.stdout, /Add-Thing\.sql' không khớp/);
+  assert.match(r.stdout, /Add-Thing\.sql' does not match/);
 });
 
-test('migration trong monorepo: annotation có prefix thư mục', () => {
+test('migration in a monorepo: annotation includes the directory prefix', () => {
   const repo = gitRepo({ 'services/db/supabase/migrations/20260901000000_init.sql': 'x' });
   const base = repo.git('rev-parse', 'HEAD');
   repo.write({ 'services/db/supabase/migrations/20260901000000_init.sql': 'y' });
@@ -84,17 +84,17 @@ test('migration trong monorepo: annotation có prefix thư mục', () => {
   assert.match(r.stdout, /file=services\/db\/supabase\/migrations\/20260901000000_init\.sql/);
 });
 
-test('push/schedule (không có BASE_SHA) chỉ kiểm tra tên', () => {
+test('push/schedule (no BASE_SHA) only checks names', () => {
   const repo = migRepo();
   const r = bash(migScript, { cwd: repo.dir, env: migEnv('') });
   assert.equal(r.code, 0, r.stdout);
 });
 
-test('Cần dựng DB? chỉ khi PR đụng vào supabase/', () => {
+test('Need a DB? only when the PR touches supabase/', () => {
   const repo = migRepo();
   repo.write({ 'src/app.ts': 'x' });
   repo.commit('code only');
-  const s = runBlock(infra, 'Cần dựng DB?');
+  const s = runBlock(infra, 'Need a DB?');
   assert.equal(bash(s, { cwd: repo.dir, env: { MODE: 'changed', BASE_SHA: repo.base } }).outputs.run, 'false');
   repo.write({ 'supabase/seed.sql': 'insert 1' });
   repo.commit('seed');
@@ -117,7 +117,7 @@ function compose(files) {
 }
 const hasCompose = spawnSync('docker', ['compose', 'version']).status === 0;
 
-test('compose: bắt port DB public, privileged, secret hardcode; cho phép 127.0.0.1 và ${VAR}', { skip: !hasCompose && 'không có docker compose' }, () => {
+test('compose: catches public DB ports, privileged, hardcoded secrets; allows 127.0.0.1 and ${VAR}', { skip: !hasCompose && 'docker compose not available' }, () => {
   const r = compose({
     'docker-compose.yml': `services:
   db:
@@ -139,7 +139,7 @@ test('compose: bắt port DB public, privileged, secret hardcode; cho phép 127.
   assert.doesNotMatch(r.out, /6379->6379|API_TOKEN|3000/);
 });
 
-test('compose: port có biến ${VAR:-x} và environment dạng list không làm crash', { skip: !hasCompose && 'không có docker compose' }, () => {
+test('compose: ports with ${VAR:-x} and list-style environment do not crash', { skip: !hasCompose && 'docker compose not available' }, () => {
   const r = compose({
     'compose.yml': `services:
   db:
@@ -154,22 +154,22 @@ test('compose: port có biến ${VAR:-x} và environment dạng list không làm
   assert.equal(r.code, 1, r.out);
   assert.doesNotMatch(r.out, /Traceback/);
   assert.match(r.out, /publish \$\{DB_PORT:-5432\}->5432/);
-  assert.match(r.out, /POSTGRES_PASSWORD` hardcode/);
+  assert.match(r.out, /POSTGRES_PASSWORD` hardcodes a value/);
   assert.doesNotMatch(r.out, /JWT_SECRET|6379/);
 });
 
-test('compose: file dev chỉ cảnh báo; image không tag → warning', { skip: !hasCompose && 'không có docker compose' }, () => {
+test('compose: dev files only warn; untagged image → warning', { skip: !hasCompose && 'docker compose not available' }, () => {
   const r = compose({
     'compose.dev.yml': 'services:\n  db:\n    image: postgres\n    ports: ["5432:5432"]\n    env_file: .env\n',
   });
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /::warning .*5432->5432/);
-  assert.match(r.out, /::warning .*không pin version/);
+  assert.match(r.out, /::warning .*has no pinned version/);
 });
 
 // ---------- security: secrets job ----------
-test('.env và .vercel/ bị commit → fail; .env.example được phép', () => {
-  const s = runBlock(security, 'Không commit file .env / thư mục .vercel');
+test('committed .env and .vercel/ → fail; .env.example is allowed', () => {
+  const s = runBlock(security, 'No committed .env files / .vercel directory');
   const bad = gitRepo({ '.env.example': 'A=', 'apps/web/.env.local': 'KEY=1', '.vercel/project.json': '{}' });
   const r = bash(s, { cwd: bad.dir, env: { ALLOW: S.env_file_allowlist } });
   assert.equal(r.code, 1);
@@ -177,7 +177,7 @@ test('.env và .vercel/ bị commit → fail; .env.example được phép', () =
   assert.match(r.stdout, /file=\.vercel\/project\.json/);
   assert.doesNotMatch(r.stdout, /\.env\.example::/);
   const good = gitRepo({ '.env.example': 'A=', '.envrc': 'x', '.env.staging.example': 'A=', 'jfoodhub/.env.production.sample': 'A=' });
-  assert.equal(bash(s, { cwd: good.dir, env: { ALLOW: S.env_file_allowlist } }).code, 0, 'file mẫu có đoạn giữa (.env.staging.example) được phép');
+  assert.equal(bash(s, { cwd: good.dir, env: { ALLOW: S.env_file_allowlist } }).code, 0, 'sample files with a middle segment (.env.staging.example) are allowed');
   const tricky = gitRepo({ '.env.example.local': 'K=1', '.env.staging': 'K=1' });
   const rt = bash(s, { cwd: tricky.dir, env: { ALLOW: S.env_file_allowlist } });
   assert.equal(rt.code, 1);
@@ -185,14 +185,14 @@ test('.env và .vercel/ bị commit → fail; .env.example được phép', () =
   assert.match(rt.stdout, /file=\.env\.staging::/);
 });
 
-test('allowlist file env mẫu giống nhau ở security.yml, debt.mjs, org-audit.mjs', () => {
+test('the sample env file allowlist is identical in security.yml, debt.mjs, org-audit.mjs', () => {
   const lit = (p) => readFileSync(path.join(ROOT, p), 'utf8');
   const re = S.env_file_allowlist;
   for (const p of ['scripts/harness/debt.mjs', 'scripts/org-audit.mjs']) assert.ok(lit(p).includes(`!/${re}/.test(f)`), p);
 });
 
-test('biến NEXT_PUBLIC_*SERVICE_ROLE* → fail; NEXT_PUBLIC_SUPABASE_ANON_KEY ok', () => {
-  const s = runBlock(security, 'Biến public không được mang tên secret');
+test('NEXT_PUBLIC_*SERVICE_ROLE* variables → fail; NEXT_PUBLIC_SUPABASE_ANON_KEY ok', () => {
+  const s = runBlock(security, 'Public variables must not have secret-like names');
   const bad = gitRepo({ 'src/lib/sb.ts': 'createClient(url, process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY)\n' });
   const r = bash(s, { cwd: bad.dir, env: { PREFIXES: S.public_env_prefixes } });
   assert.equal(r.code, 1);
@@ -202,7 +202,7 @@ test('biến NEXT_PUBLIC_*SERVICE_ROLE* → fail; NEXT_PUBLIC_SUPABASE_ANON_KEY 
   const good = gitRepo({
     'src/lib/sb.ts': 'createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)\n',
     'tests/leak.test.ts': 'expect(process.env.NEXT_PUBLIC_SECRET_X).toBeUndefined()\n',
-    'docs/ci.yml': '# vd NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY\n',
+    'docs/ci.yml': '# e.g. NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY\n',
   });
   assert.equal(bash(s, { cwd: good.dir, env: { PREFIXES: S.public_env_prefixes } }).code, 0);
 });

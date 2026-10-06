@@ -1,10 +1,10 @@
-// Tiện ích dùng chung cho harness. Chỉ dùng Node built-in (+ ruby có sẵn trên runner để đọc YAML).
+// Shared harness utilities. Node built-ins only (+ the runner's preinstalled Ruby for reading YAML).
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-/** Đọc YAML → object, dùng Ruby (psych) có sẵn trên GitHub runner, không cần npm install. */
+/** Read YAML → object using Ruby (psych), preinstalled on GitHub runners, so no npm install is needed. */
 export function loadYaml(file) {
   if (!existsSync(file)) return null;
   const out = execFileSync('ruby', ['-ryaml', '-rjson', '-e',
@@ -12,7 +12,7 @@ export function loadYaml(file) {
   return JSON.parse(out);
 }
 
-/** Đọc file tại một commit (vd base của PR) → text, hoặc null nếu không có. */
+/** Read a file at a commit (e.g. the PR base) → text, or null if it does not exist. */
 export function showAt(ref, file, cwd = '.') {
   try {
     return execFileSync('git', ['show', `${ref}:${file}`], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
@@ -21,7 +21,7 @@ export function showAt(ref, file, cwd = '.') {
   }
 }
 
-/** YAML tại một commit. Không có ref → đọc working tree. */
+/** YAML at a commit. No ref → read the working tree. */
 export function loadYamlAt(ref, file, cwd = '.') {
   if (!ref) return loadYaml(path.join(cwd, file));
   const text = showAt(ref, file, cwd);
@@ -32,7 +32,7 @@ export function loadYamlAt(ref, file, cwd = '.') {
 }
 
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
-/** Merge sâu: object gộp đệ quy, mảng và giá trị đơn bị thay thế. */
+/** Deep merge: objects merge recursively; arrays and scalars are replaced. */
 export function deepMerge(...items) {
   const out = {};
   for (const it of items.filter(isObj)) {
@@ -41,7 +41,7 @@ export function deepMerge(...items) {
   return out;
 }
 
-/** Glob → RegExp. Hỗ trợ **, *, ?, {a,b}. Path luôn tính từ root repo, dùng '/'. */
+/** Glob → RegExp. Supports **, *, ?, {a,b}. Paths are always relative to the repo root and use '/'. */
 export function globToRegExp(glob) {
   const esc = (s) => s.replace(/[.+^$()|[\]\\]/g, '\\$&');
   let re = '';
@@ -72,14 +72,14 @@ export function git(args, cwd = '.') {
 }
 export const trackedFiles = (cwd = '.') => git(['ls-files', '-z'], cwd).split('\0').filter(Boolean);
 
-/** File thay đổi (path từ root repo) so với base; base rỗng → null (= không giới hạn). */
+/** Files changed relative to base (paths from the repo root); empty base → null (= no limit). */
 export function changedFiles(base, cwd = '.') {
   if (!base) return null;
   return git(['diff', '--name-only', '--no-renames', '--diff-filter=ACMR', '-z', `${base}...HEAD`], cwd)
     .split('\0').filter(Boolean);
 }
 
-/** Dòng được thêm/sửa trong diff: Map<file, [{line, text}]>. */
+/** Lines added/modified in the diff: Map<file, [{line, text}]>. */
 export function addedLines(base, cwd = '.') {
   const diff = git(['-c', 'core.quotePath=false', 'diff', '-U0', '--no-color', '--no-ext-diff', '--no-renames', `${base}...HEAD`], cwd);
   const out = new Map();
@@ -111,7 +111,7 @@ export function readText(file, max = 1024 * 1024) {
   }
 }
 
-// ---------- Output cho GitHub Actions ----------
+// ---------- GitHub Actions output ----------
 const escData = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
 const escProp = (s) => escData(s).replace(/:/g, '%3A').replace(/,/g, '%2C');
 
@@ -131,20 +131,20 @@ export function summary(md) {
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${md}\n`);
 }
 
-/** In annotation + ghi bảng summary; trả về số lỗi mức error. */
+/** Print annotations + write the summary table; returns the number of error-level findings. */
 export function report(title, findings, { limit = 100 } = {}) {
   for (const f of findings) console.log(annotation(f));
   const errors = findings.filter((f) => f.severity === 'error').length;
   const warns = findings.length - errors;
   const icon = errors ? '❌' : warns ? '⚠️' : '✅';
-  let md = `### ${icon} ${title}: ${errors} lỗi, ${warns} cảnh báo\n`;
+  let md = `### ${icon} ${title}: ${errors} error(s), ${warns} warning(s)\n`;
   if (findings.length) {
-    md += '\n| | Vị trí | Rule | Chi tiết |\n|---|---|---|---|\n';
+    md += '\n| | Location | Rule | Details |\n|---|---|---|---|\n';
     for (const f of findings.slice(0, limit)) {
       const where = f.file ? `\`${f.file}${f.line ? `:${f.line}` : ''}\`` : '';
       md += `| ${f.severity === 'error' ? '❌' : '⚠️'} | ${where} | ${f.title ?? ''} | ${String(f.message).replace(/\|/g, '\\|').replace(/\n/g, ' ')} |\n`;
     }
-    if (findings.length > limit) md += `\n…và ${findings.length - limit} mục khác\n`;
+    if (findings.length > limit) md += `\n…and ${findings.length - limit} more\n`;
   }
   summary(md);
   return errors;

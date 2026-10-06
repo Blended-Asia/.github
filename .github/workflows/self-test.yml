@@ -1,4 +1,4 @@
-# CI cho chính repo .github: lint workflow + test logic trước khi dời tag release.
+# CI for this .github repo itself: lint workflows + test logic before moving the release tag.
 name: self-test
 
 on:
@@ -27,8 +27,8 @@ jobs:
       - name: Unit tests
         run: node --test 'tests/*.test.mjs'
 
-  # Chạy tool thật (Next.js/ESLint/tsc/Prettier/dependency-cruiser, RuboCop/Brakeman) trên repo mẫu,
-  # để phát hiện sớm khi tool đổi format output.
+  # Run the real tools (Next.js/ESLint/tsc/Prettier/dependency-cruiser, RuboCop/Brakeman) on sample repos
+  # to catch tool output-format changes early.
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20

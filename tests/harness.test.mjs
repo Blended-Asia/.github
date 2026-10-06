@@ -23,11 +23,11 @@ test('globToRegExp: **, *, {a,b}', () => {
   assert.ok(g('**/Dockerfile*', 'Dockerfile'));
 });
 
-test('deepMerge: object gộp, mảng thay thế', () => {
+test('deepMerge: objects merge, arrays are replaced', () => {
   assert.deepEqual(deepMerge({ a: { b: 1, c: [1, 2] } }, { a: { c: [3] }, d: 1 }), { a: { b: 1, c: [3] }, d: 1 });
 });
 
-test('annotation escape ký tự đặc biệt', () => {
+test('annotation escapes special characters', () => {
   assert.equal(annotation({ severity: 'error', file: 'a,b.ts', line: 3, title: 'x:y', message: 'l1\nl2 100%' }),
     '::error file=a%2Cb.ts,line=3,title=x%3Ay::l1%0Al2 100%25');
 });
@@ -50,7 +50,7 @@ test('detectProfiles: rails, next monorepo, rails + package.json, workspace root
   ]);
 
   const engine = fs({ Gemfile: 'gemspec\n', 'Gemfile.lock': 'GEM\n  specs:\n    rails (8.0.1)\n' });
-  assert.deepEqual(detectProfiles(engine.files, engine.read), [], 'gem/engine có rails trong lock không phải app');
+  assert.deepEqual(detectProfiles(engine.files, engine.read), [], 'a gem/engine with rails in the lock is not an app');
   const app = fs({ Gemfile: 'source "x"\n', 'config/application.rb': 'module X; end' });
   assert.deepEqual(detectProfiles(app.files, app.read), [{ name: 'rails', path: '.' }]);
   const sinatra = fs({ Gemfile: 'gem "sinatra"\n' });
@@ -66,7 +66,7 @@ function repoWith(files) {
   return dir;
 }
 
-test('resolveConfig: profile khai báo, prefix path cho rule, disable, rule riêng, override check', () => {
+test('resolveConfig: declared profiles, rule path prefixes, disable, custom rules, check overrides', () => {
   const dir = repoWith({
     '.github/harness.yml': `profiles:
   - name: react
@@ -82,7 +82,7 @@ architecture:
     - id: web/no-moment
       paths: ["web/**/*.ts"]
       forbid: "from ['\\"]moment['\\"]"
-      message: Dùng date-fns
+      message: Use date-fns
 merge:
   bot_approve:
     max_lines: 50
@@ -99,18 +99,18 @@ merge:
   assert.ok(ids.includes('web/no-moment'));
   assert.deepEqual(cfg.rules.find((r) => r.id === 'rails/view-no-query').paths, ['api/app/views/**/*.{erb,haml,slim}']);
   assert.equal(cfg.merge.bot_approve.max_lines, 50);
-  assert.equal(cfg.merge.bot_approve.enabled, true, 'giữ mặc định của base');
-  assert.equal(cfg.review.provider, 'openai', 'giữ mặc định của base');
+  assert.equal(cfg.merge.bot_approve.enabled, true, 'keeps the base default');
+  assert.equal(cfg.review.provider, 'openai', 'keeps the base default');
 });
 
-test('resolveConfig: báo lỗi rõ khi regex sai hoặc profile lạ', () => {
+test('resolveConfig: clear errors for invalid regex or unknown profile', () => {
   const bad = repoWith({ '.github/harness.yml': 'architecture:\n  rules:\n    - id: x\n      paths: ["**"]\n      forbid: "(unclosed"\n' });
-  assert.throws(() => resolveConfig({ root: bad, harnessDir: ROOT, files: [] }), /Rule x .*forbid không phải regex hợp lệ/);
+  assert.throws(() => resolveConfig({ root: bad, harnessDir: ROOT, files: [] }), /Rule x .*forbid is not a valid regex/);
   const unknown = repoWith({ '.github/harness.yml': 'profiles: [django]\n' });
-  assert.throws(() => resolveConfig({ root: unknown, harnessDir: ROOT, files: [] }), /Profile "django" không tồn tại/);
+  assert.throws(() => resolveConfig({ root: unknown, harnessDir: ROOT, files: [] }), /Profile "django" does not exist/);
 });
 
-test('mọi rule mặc định trong profiles/*.yml đều hợp lệ', () => {
+test('every default rule in profiles/*.yml is valid', () => {
   const dir = repoWith({ '.github/harness.yml': 'profiles: [rails, react, node]\n' });
   const cfg = resolveConfig({ root: dir, harnessDir: ROOT, files: [] });
   assert.ok(cfg.rules.length >= 10);
@@ -119,7 +119,7 @@ test('mọi rule mặc định trong profiles/*.yml đều hợp lệ', () => {
 // ---------- architecture rules ----------
 function rulesRepo() {
   const repo = gitRepo({
-    'web/components/Old.tsx': "import x from '@/app/page';\n", // nợ cũ
+    'web/components/Old.tsx': "import x from '@/app/page';\n", // existing debt
     'web/app/c.tsx': "'use client';\nexport const A = 1;\n",
     'api/app/models/user.rb': 'class User\nend\n',
   });
@@ -127,7 +127,7 @@ function rulesRepo() {
 }
 const cfgFor = () => resolveConfig({ root: repoWith({ '.github/harness.yml': 'profiles:\n  - {name: react, path: web}\n  - {name: rails, path: api}\n' }), harnessDir: ROOT, files: [] });
 
-test('rules: scope changed chỉ bắt dòng mới; disable-line; if_file_matches; allow', () => {
+test('rules: scope changed only flags new lines; disable-line; if_file_matches; allow', () => {
   const repo = rulesRepo();
   repo.write({
     'web/components/New.tsx': "import P from '@/app/page';\nimport Q from '@/app/x'; // harness-disable-line react/shared-components-no-route-import\n",
@@ -147,16 +147,16 @@ test('rules: scope changed chỉ bắt dòng mới; disable-line; if_file_matche
   ]);
 });
 
-test('rules: scope all quét cả nợ cũ', () => {
+test('rules: scope all also scans existing debt', () => {
   const repo = rulesRepo();
   const f = scan({ rules: cfgFor().rules, base: '', scope: 'all', root: repo.dir });
   assert.deepEqual(f.map((x) => `${x.title}@${x.file}`), ['react/shared-components-no-route-import@web/components/Old.tsx']);
 });
 
-// ---------- parser kết quả tool ----------
+// ---------- tool output parsers ----------
 const toRepo = (p) => (p.startsWith('/abs/web/') ? `web/${p.slice(9)}` : `web/${p}`);
 
-test('parseEslint: bỏ cảnh báo "File ignored", map severity', () => {
+test('parseEslint: drops "File ignored" warnings, maps severity', () => {
   const json = JSON.stringify([
     { filePath: '/abs/web/a.ts', messages: [{ ruleId: 'no-unused-vars', severity: 2, message: 'x unused', line: 3 }, { ruleId: 'no-console', severity: 1, message: 'console', line: 4 }] },
     { filePath: '/abs/web/b.ts', messages: [{ ruleId: null, severity: 1, message: 'File ignored because of a matching ignore pattern.' }] },
@@ -170,7 +170,7 @@ test('parseTsc', () => {
   assert.deepEqual(parseTsc(out, toRepo), [{ severity: 'error', file: 'web/app/x.tsx', line: 4, title: 'tsc TS2322', message: "Type 'string' is not assignable to type 'number'." }]);
 });
 
-test('parseRubocop, parseBrakeman (ngưỡng confidence), parsePackwerk', () => {
+test('parseRubocop, parseBrakeman (confidence threshold), parsePackwerk', () => {
   const rc = JSON.stringify({ files: [{ path: 'app/models/user.rb', offenses: [
     { severity: 'convention', message: 'Prefer double quotes', cop_name: 'Style/StringLiterals', location: { start_line: 5 } },
     { severity: 'info', message: 'meh', cop_name: 'X', location: { start_line: 1 } },
@@ -188,7 +188,7 @@ test('parseRubocop, parseBrakeman (ngưỡng confidence), parsePackwerk', () => 
   assert.deepEqual(parsePackwerk(pw, (p) => p), [{ severity: 'error', file: 'app/models/a.rb', line: 3, title: 'packwerk', message: 'Dependency violation: ::B belongs to `packs/b`, but `packs/a` does not specify a dependency on `packs/b`.' }]);
 });
 
-test('parseDepcruise: vòng import + related để lọc theo file đổi', () => {
+test('parseDepcruise: import cycles + related files for filtering by changed files', () => {
   const dc = JSON.stringify({ summary: { violations: [
     { from: 'lib/b.ts', to: 'lib/c.ts', rule: { name: 'no-circular', severity: 'error' }, cycle: [{ name: 'lib/c.ts' }, { name: 'lib/b.ts' }] },
     { from: 'src/x.ts', to: 'vitest', rule: { name: 'no-dev-deps-in-prod-code', severity: 'error' } },
@@ -196,11 +196,11 @@ test('parseDepcruise: vòng import + related để lọc theo file đổi', () =
   ] } });
   const f = parseDepcruise(dc, toRepo);
   assert.equal(f.length, 2);
-  assert.equal(f[0].message, 'Vòng import: lib/b.ts → lib/c.ts → lib/b.ts');
+  assert.equal(f[0].message, 'Import cycle: lib/b.ts → lib/c.ts → lib/b.ts');
   assert.deepEqual(f[0].related, ['web/lib/b.ts', 'web/lib/c.ts', 'web/lib/c.ts', 'web/lib/b.ts']);
 });
 
-test('detectPM: lockfile gần nhất, hỗ trợ workspace', () => {
+test('detectPM: nearest lockfile, supports workspaces', () => {
   const dir = repoWith({ 'pnpm-lock.yaml': '', 'apps/web/package.json': '{}', 'tools/package-lock.json': '{}' });
   assert.deepEqual(detectPM(path.join(dir, 'apps/web'), dir), { pm: 'pnpm', dir });
   assert.equal(detectPM(path.join(dir, 'tools'), dir).pm, 'npm');
@@ -208,7 +208,7 @@ test('detectPM: lockfile gần nhất, hỗ trợ workspace', () => {
   assert.equal(detectPM(none, none).noLock, true);
 });
 
-test('rules: không báo nhầm các mẫu hay gặp (comment, hằng số, NODE_ENV, .render của object)', () => {
+test('rules: no false positives on common patterns (comments, constants, NODE_ENV, object .render)', () => {
   const repo = rulesRepo();
   repo.write({
     'api/app/models/post.rb': "class Post\n  # once per request.\n  def html = MARKDOWN.render(body)\n  def s = STATUSES.first\nend\n",
@@ -224,7 +224,7 @@ test('rules: không báo nhầm các mẫu hay gặp (comment, hằng số, NODE
   ]);
 });
 
-test('resolveConfig(configRef): đọc harness.yml ở commit base, bỏ qua bản sửa trong PR', () => {
+test('resolveConfig(configRef): reads harness.yml at the base commit, ignoring edits in the PR', () => {
   const repo = gitRepo({ '.github/harness.yml': 'profiles: [react]\narchitecture:\n  disable: []\n' });
   const baseSha = repo.git('rev-parse', 'HEAD');
   repo.write({ '.github/harness.yml': 'profiles: [react]\narchitecture:\n  disable: [react/client-no-server-code]\nchecks:\n  react:\n    eslint: false\n' });
@@ -238,10 +238,10 @@ test('resolveConfig(configRef): đọc harness.yml ở commit base, bỏ qua b�
   const b = noFileAtBase.git('rev-parse', 'HEAD');
   noFileAtBase.write({ '.github/harness.yml': 'profiles: [rails]\n' });
   noFileAtBase.commit('add');
-  assert.deepEqual(resolveConfig({ root: noFileAtBase.dir, harnessDir: ROOT, files: [], configRef: b }).profiles, [], 'base chưa có config → dùng mặc định + tự nhận diện');
+  assert.deepEqual(resolveConfig({ root: noFileAtBase.dir, harnessDir: ROOT, files: [], configRef: b }).profiles, [], 'no config on base → defaults + auto-detection');
 });
 
-test('resolveBin: tìm binary hoist ở root workspace, Yarn PnP, hoặc báo thiếu', () => {
+test('resolveBin: finds binaries hoisted to the workspace root, Yarn PnP, or reports missing', () => {
   const ws = repoWith({ 'node_modules/.bin/eslint': '', 'apps/web/package.json': '{}' });
   assert.deepEqual(resolveBin('eslint', path.join(ws, 'apps/web'), ws), [path.join(ws, 'node_modules/.bin/eslint'), []]);
   const local = repoWith({ 'node_modules/.bin/tsc': 'root', 'apps/web/node_modules/.bin/tsc': 'local' });
@@ -252,12 +252,12 @@ test('resolveBin: tìm binary hoist ở root workspace, Yarn PnP, hoặc báo th
   assert.equal(resolveBin('prettier', none, none), null);
 });
 
-test('rules: không né được bằng comment rỗng trước code, #field của JS, <%# %> trong ERB', () => {
+test('rules: cannot be dodged with an empty comment before code, JS #fields, or <%# %> in ERB', () => {
   const repo = rulesRepo();
   repo.write({
-    'web/app/c.tsx': "'use client';\nexport const A = 1;\n/**/ const k = process.env.SERVICE_ROLE_KEY;\nclass X { #k = process.env.STRIPE_SECRET; }\n/* chỉ comment process.env.X */\n",
+    'web/app/c.tsx': "'use client';\nexport const A = 1;\n/**/ const k = process.env.SERVICE_ROLE_KEY;\nclass X { #k = process.env.STRIPE_SECRET; }\n/* only a comment process.env.X */\n",
     'api/app/views/posts/show.html.erb': '<%# note %><%= Post.where(a: 1).size %>\n<%# Post.where(b: 2) %>\n',
-    'api/app/models/user.rb': 'class User\n  # session[:x] trong comment\nend\n',
+    'api/app/models/user.rb': 'class User\n  # session[:x] in a comment\nend\n',
   });
   repo.commit('pr');
   const f = scan({ rules: cfgFor().rules, base: repo.base, scope: 'changed', root: repo.dir });
@@ -268,22 +268,22 @@ test('rules: không né được bằng comment rỗng trước code, #field c�
   ]);
 });
 
-test('splitByBaseline: lỗi ở file không đổi — có sẵn ở base thì bỏ qua, mới thì giữ (đếm theo số lần)', () => {
+test('splitByBaseline: problems in unchanged files — skipped if present on base, kept if new (counted by occurrences)', () => {
   const e = (file, msg) => ({ file, title: 'tsc TS2304', message: msg, line: 1 });
   const base = new Map([[findingKey(e('a.ts', 'X')), 1]]);
   const { fresh, preexisting } = splitByBaseline([e('a.ts', 'X'), e('a.ts', 'X'), e('b.ts', 'Y')], base);
   assert.equal(preexisting, 1);
   assert.deepEqual(fresh.map((f) => f.file), ['a.ts', 'b.ts']);
-  assert.deepEqual(splitByBaseline([e('a.ts', 'X')], null), { fresh: [], preexisting: 1 }, 'không dựng được base → giữ hành vi cũ');
+  assert.deepEqual(splitByBaseline([e('a.ts', 'X')], null), { fresh: [], preexisting: 1 }, 'base could not be built → keep the old behavior');
   const fp = splitByBaseline([{ fingerprint: 'f1' }, { fingerprint: 'f2' }], new Map([['f1', 1]]), (f) => f.fingerprint);
   assert.deepEqual(fp.fresh, [{ fingerprint: 'f2' }]);
 });
 
-test('onlyAddedLines: chỉ giữ lỗi trên dòng PR thêm/sửa; lỗi không có dòng thì giữ', () => {
+test('onlyAddedLines: keeps only problems on lines the PR added/modified; keeps problems without a line', () => {
   const added = new Map([['a.ts', new Set([3, 4])]]);
   const f = [{ file: 'a.ts', line: 2 }, { file: 'a.ts', line: 3 }, { file: 'b.ts', line: 1 }, { file: 'a.ts' }];
   const { kept, dropped } = onlyAddedLines(f, added);
   assert.deepEqual(kept, [{ file: 'a.ts', line: 3 }, { file: 'a.ts' }]);
   assert.equal(dropped, 2);
-  assert.equal(onlyAddedLines(f, null).kept.length, 4, 'không có base → giữ tất cả');
+  assert.equal(onlyAddedLines(f, null).kept.length, 4, 'no base → keep everything');
 });

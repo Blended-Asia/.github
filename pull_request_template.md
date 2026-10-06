@@ -1,11 +1,11 @@
 ## Summary
-<!-- Thay đổi gì và vì sao. Kèm mã ticket nếu có (vd PROJ-123). -->
+<!-- What changed and why. Include the ticket key if any (e.g. PROJ-123). -->
 
 ## How to test
-<!-- Các bước để reviewer kiểm tra lại. Ghi "N/A" nếu không áp dụng. -->
+<!-- Steps for the reviewer to verify. Write "N/A" if not applicable. -->
 
 ## Checklist
-- [ ] Đã tự test trên local / Vercel preview
-- [ ] Không commit secret hay file `.env`
+- [ ] Tested locally / on Vercel preview
+- [ ] No secrets or `.env` files committed
 - [ ] Migration mới (nếu có) chạy được với `supabase db reset`, bảng mới đã bật RLS
-- [ ] Đã cập nhật docs/README nếu cần
+- [ ] Updated docs/README if needed

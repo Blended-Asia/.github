@@ -1,4 +1,4 @@
-# Profile Node.js (API, worker, script).
+# Node.js profile (APIs, workers, scripts).
 checks:
   eslint: true
   typecheck: true
@@ -9,16 +9,16 @@ checks:
 architecture:
   rules:
     - id: node/no-sql-string-building
-      security: true            # rule bảo mật: không tắt, không hạ mức khi onboard
+      security: true            # security rule: cannot be disabled or downgraded when onboarding
       paths: ["**/*.{ts,js,mjs,cjs}"]
       exclude: ["**/*.test.*", "**/*.spec.*", "**/migrations/**"]
       forbid: '\.(query|execute|raw|unsafe)\(\s*`[^`]*\$\{|\.(query|execute|raw|unsafe)\(\s*["''][^"'']*["'']\s*\+'
-      message: Không ghép chuỗi vào SQL. Dùng parameterized query ($1, ?) hoặc query builder.
+      message: Do not concatenate strings into SQL. Use parameterized queries ($1, ?) or a query builder.
       severity: error
 
     - id: node/no-console-log
       paths: ["src/**/*.{ts,js,mjs}"]
       exclude: ["**/*.test.*", "**/*.spec.*", "**/scripts/**"]
       forbid: '\bconsole\.(log|debug)\('
-      message: Dùng logger có level thay cho console.log.
+      message: Use a leveled logger instead of console.log.
       severity: warn

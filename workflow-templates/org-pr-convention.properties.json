@@ -1,6 +1,6 @@
 {
   "name": "Org: PR convention",
-  "description": "Kiểm tra title (Conventional Commits), tên branch, mô tả PR, kích thước PR theo chuẩn của org.",
+  "description": "Checks PR title (Conventional Commits), branch name, PR description and PR size against org standards.",
   "iconName": "octicon git-pull-request",
   "categories": ["Automation"]
 }

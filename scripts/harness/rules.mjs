@@ -1,6 +1,6 @@
-// Architecture scan: rule dạng "file khớp paths không được chứa forbid" — chạy cho mọi ngôn ngữ.
-// Scope "changed": chỉ xét dòng thêm/sửa trong PR (nợ cũ không chặn). Scope "all": quét toàn repo.
-// Bỏ qua 1 dòng có chủ đích: thêm comment `harness-disable-line <rule-id>` trên dòng đó (hiện trong diff → reviewer thấy).
+// Architecture scan: rules of the form "files matching paths must not contain forbid" — runs for every language.
+// Scope "changed": only lines added/modified in the PR are checked (existing debt does not block). Scope "all": scan the whole repo.
+// To intentionally skip a line: add a `harness-disable-line <rule-id>` comment on that line (it shows in the diff → reviewers see it).
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -22,9 +22,9 @@ const HASH_COMMENT = /\.(rb|rake|ru|gemspec|ya?ml|py|sh|toml|tf)$|(^|\/)(Gemfile
 const SLASH_COMMENT = /\.(js|jsx|ts|tsx|mjs|cjs|mts|cts|vue|svelte|go|java|kt|swift|c|cc|cpp|h|cs|scss|less|rs)$/;
 
 /**
- * Bỏ phần comment của một dòng, trả về phần code còn lại. Chỉ bỏ những span đã đóng
- * và comment đầu dòng theo đúng ngôn ngữ của file, để không né được rule bằng cách đặt một
- * comment rỗng trước code, hay nhầm private field `#x` của JS là comment.
+ * Strip comments from a line and return the remaining code. Only closed spans and
+ * line-leading comments in the file's own language are removed, so a rule cannot be dodged by
+ * putting an empty comment before the code, and a JS private field `#x` is not mistaken for a comment.
  */
 export function stripComments(text, file) {
   let t = text.replace(/\/\*.*?\*\//g, ' ').replace(/<%#.*?%>/g, ' ').replace(/<!--.*?-->/g, ' ');
@@ -34,7 +34,7 @@ export function stripComments(text, file) {
   return t;
 }
 
-/** lines: [{line, text}]; content: toàn bộ file (cho if_file_matches). */
+/** lines: [{line, text}]; content: the whole file (for if_file_matches). */
 export function checkFile(compiled, file, lines, content) {
   const out = [];
   for (const r of compiled) {
@@ -45,7 +45,7 @@ export function checkFile(compiled, file, lines, content) {
       if (!code.trim() || !r.forbidRe.test(code)) continue;
       if (r.allowRe?.test(code)) continue;
       if (text.includes(`harness-disable-line ${r.id}`)) continue;
-      out.push({ severity: r.severity, file, line, title: r.id, message: r.message ?? `Vi phạm ${r.id}` });
+      out.push({ severity: r.severity, file, line, title: r.id, message: r.message ?? `Violates ${r.id}` });
     }
   }
   return out;
@@ -76,10 +76,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const base = process.env.BASE_SHA || '';
   const configured = cfg.convention?.scope ?? 'changed';
   const scope = base ? configured : 'all';
-  // push/schedule không có base: quét toàn repo để xem nợ, nhưng chỉ cảnh báo (trừ khi repo chọn scope: all)
+  // push/schedule have no base: scan the whole repo to surface debt, but only warn (unless the repo chose scope: all)
   const informational = !base && configured !== 'all';
   const findings = scan({ rules: cfg.rules, base, scope })
     .map((f) => (informational ? { ...f, severity: 'warn' } : f));
-  const errors = report(`Architecture (${cfg.rules.length} rule, scope ${scope}${informational ? ', chỉ báo cáo' : ''})`, findings);
+  const errors = report(`Architecture (${cfg.rules.length} rule, scope ${scope}${informational ? ', report only' : ''})`, findings);
   process.exit(errors ? 1 : 0);
 }

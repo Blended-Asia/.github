@@ -1,6 +1,6 @@
 {
   "name": "Org: harness (security + infra + stack + gate)",
-  "description": "Check theo stack (Rails/React/Node), kiến trúc, security, infra; comment khi reject, approve + auto-merge khi đạt. Required check: harness / gate.",
+  "description": "Stack (Rails/React/Node), architecture, security and infra checks; comments on rejection, approves + auto-merges on pass. Required check: harness / gate.",
   "iconName": "octicon shield-check",
   "categories": ["Security", "Deployment", "Automation"]
 }

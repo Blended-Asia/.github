@@ -1,4 +1,4 @@
-// Helper cho test: trích script/step từ workflow YAML để chạy offline, không cần parser YAML.
+// Test helpers: extract scripts/steps from workflow YAML to run offline, without a YAML parser.
 import { readFileSync, mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -13,20 +13,20 @@ const dedent = (lines) => {
   return lines.map((l) => l.slice(ind)).join('\n');
 };
 
-/** Lấy đoạn giữa 2 marker comment (`// ---- x:begin ----` / `# ---- x:begin ----`). */
+/** Get the section between two marker comments (`// ---- x:begin ----` / `# ---- x:begin ----`). */
 export function between(text, marker) {
   const lines = text.split('\n');
   const s = lines.findIndex((l) => l.includes(`---- ${marker}:begin ----`));
   const e = lines.findIndex((l) => l.includes(`---- ${marker}:end ----`));
-  if (s < 0 || e < 0) throw new Error(`Không thấy marker ${marker}`);
+  if (s < 0 || e < 0) throw new Error(`Marker not found: ${marker}`);
   return dedent(lines.slice(s + 1, e));
 }
 
-/** Lấy block `run: |` của step theo tên (hoặc `id: x` với step không có name). */
+/** Get a step's `run: |` block by name (or `id: x` for steps without a name). */
 export function runBlock(text, stepName) {
   const lines = text.split('\n');
   const s = lines.findIndex((l) => [`- name: ${stepName}`, `- ${stepName}`].includes(l.trim()));
-  if (s < 0) throw new Error(`Không thấy step ${stepName}`);
+  if (s < 0) throw new Error(`Step not found: ${stepName}`);
   const r = lines.findIndex((l, i) => i > s && /^\s+run: \|\s*$/.test(l));
   const runIndent = lines[r].match(/^ */)[0].length;
   const body = [];
@@ -38,7 +38,7 @@ export function runBlock(text, stepName) {
   return dedent(body);
 }
 
-/** Đọc default của các input trong workflow_call (đủ dùng cho file của repo này). */
+/** Read the defaults of workflow_call inputs (good enough for this repo's files). */
 export function inputDefaults(text) {
   const out = {};
   const lines = text.split('\n');
@@ -62,7 +62,7 @@ export function inputDefaults(text) {
   return out;
 }
 
-/** Tạo git repo tạm với các file cho trước. */
+/** Create a temporary git repo with the given files. */
 export function gitRepo(files = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'orgtest-'));
   const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
@@ -81,7 +81,7 @@ export function gitRepo(files = {}) {
   return { dir, git, write, commit: (m) => { git('add', '-A'); git('commit', '-q', '-m', m); return git('rev-parse', 'HEAD'); } };
 }
 
-/** Chạy bash script như shell mặc định của GitHub Actions (bash -e {0}). */
+/** Run a bash script like GitHub Actions' default shell (bash -e {0}). */
 export function bash(script, { cwd, env = {} } = {}) {
   const out = path.join(mkdtempSync(path.join(tmpdir(), 'gho-')), 'out');
   const sum = out + '.summary';

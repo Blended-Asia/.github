@@ -1,47 +1,47 @@
-# Profile Rails: tool + rule kiến trúc mặc định. Path của rule tính từ thư mục profile.
+# Rails profile: tools + default architecture rules. Rule paths are relative to the profile directory.
 checks:
-  rubocop: true             # cần gem rubocop (vd rubocop-rails-omakase) trong Gemfile
-  brakeman: true            # security scan riêng cho Rails
-  brakeman_fail_confidence: Medium   # High | Medium | Weak — từ mức này trở lên thì chặn PR
-  packwerk: auto            # chạy khi repo có packwerk.yml
+  rubocop: true             # needs a rubocop gem (e.g. rubocop-rails-omakase) in the Gemfile
+  brakeman: true            # Rails-specific security scan
+  brakeman_fail_confidence: Medium   # High | Medium | Weak — this level and above blocks the PR
+  packwerk: auto            # runs when the repo has packwerk.yml
 
 architecture:
   rules:
     - id: rails/model-no-http
       paths: ["app/models/**/*.rb"]
       forbid: '^\s*(render|redirect_to|head)\b|\b(session|cookies|flash)\[|\brequest\.(env|headers|remote_ip|params|session)\b'
-      message: Model không chạm vào HTTP (render, session, cookies, request). Xử lý ở controller rồi truyền giá trị vào model.
+      message: Models must not touch HTTP (render, session, cookies, request). Handle it in the controller and pass values into the model.
       severity: error
 
     - id: rails/model-no-params
       paths: ["app/models/**/*.rb"]
       forbid: '\bparams\['
-      message: Model nhận nguyên params của controller là dấu hiệu lẫn trách nhiệm. Lọc bằng strong params ở controller và truyền thuộc tính cụ thể.
+      message: A model taking the controller's raw params is a sign of mixed responsibilities. Filter with strong params in the controller and pass specific attributes.
       severity: warn
 
     - id: rails/view-no-query
       paths: ["app/views/**/*.{erb,haml,slim}"]
       forbid: '\.(where|find_by|find|joins|includes|pluck|order)\(|\b[A-Z][a-z][A-Za-z0-9]*\.(all|first|last|count)\b'
-      message: View không query DB. Chuẩn bị dữ liệu ở controller, presenter hoặc view component.
+      message: Views must not query the DB. Prepare data in the controller, a presenter or a view component.
       severity: error
 
     - id: rails/controller-no-raw-sql
-      security: true            # rule bảo mật: không tắt, không hạ mức khi onboard
+      security: true            # security rule: cannot be disabled or downgraded when onboarding
       paths: ["app/controllers/**/*.rb"]
       forbid: 'find_by_sql|connection\.(execute|exec_query|select_all)'
-      message: Controller không chạy SQL thô. Đưa vào model scope hoặc query object.
+      message: Controllers must not run raw SQL. Move it into a model scope or a query object.
       severity: error
 
     - id: rails/migration-no-app-model
       paths: ["db/migrate/**/*.rb"]
       forbid: '\b[A-Z][A-Za-z0-9]+\.(find_each|find_by|find|all|where|update_all|create!?)\b'
       allow: '\b(ActiveRecord|Rails|Arel|Time|Date|DateTime|JSON|ENV|Integer|Float|SecureRandom)\.'
-      message: Migration không gọi model của app (model đổi về sau sẽ làm hỏng migration cũ). Dùng SQL hoặc khai báo class model tạm trong migration.
+      message: Migrations must not call app models (later model changes will break old migrations). Use SQL or define a temporary model class inside the migration.
       severity: warn
 
     - id: rails/csrf-disabled
-      security: true            # rule bảo mật: không tắt, không hạ mức khi onboard
+      security: true            # security rule: cannot be disabled or downgraded when onboarding
       paths: ["app/controllers/**/*.rb"]
       forbid: 'skip_(before_action|forgery_protection)\b.*verify_authenticity_token|protect_from_forgery\s+with:\s*:null_session'
-      message: Tắt CSRF protection cần security review và ghi rõ lý do.
+      message: Disabling CSRF protection needs a security review and a documented reason.
       severity: warn
