@@ -1,4 +1,4 @@
-# YOUR_ORG/.github: harness cho mọi PR
+# Blended-Asia/.github: harness cho mọi PR
 
 > Làm tiếp với Claude Code: đọc `CLAUDE.md` (bối cảnh + bất biến) và `HANDOFF.md` (việc còn lại theo phase).
 
@@ -133,9 +133,9 @@ Chỉ Enterprise mới khoá hoàn toàn được, bằng `required-*.yml` + `ru
 
 ## Cài đặt
 
-1. **Tạo repo `YOUR_ORG/.github` (public)**, push nội dung này lên rồi chạy:
+1. **Tạo repo `Blended-Asia/.github` (public)**, push nội dung này lên rồi chạy:
    ```bash
-   ./scripts/init.sh <ten-org>        # thay YOUR_ORG ở mọi file
+   ./scripts/init.sh <ten-org>        # thay Blended-Asia ở mọi file
    git commit -am "chore: init" && git push
    git tag v1 && git push origin v1
    ```
@@ -148,7 +148,7 @@ Chỉ Enterprise mới khoá hoàn toàn được, bằng `required-*.yml` + `ru
 4. **GitHub App cho org-audit**: có thể dùng chung App ở bước 2 nếu thêm đủ quyền. Cần Administration *Read*, Contents *R/W*, Deployments *Read*, Issues *R/W*, Metadata *Read*, Pull requests *R/W*, Workflows *R/W*.
    - Trong repo `.github`: variable `ORG_AUDIT_APP_CLIENT_ID`, secret `ORG_AUDIT_APP_PRIVATE_KEY`.
    - Variable `AUDIT_REPORT_REPO` là một repo **private** nhận report. Repo `.github` public nên script tự chạy quiet: không in tên repo ra log.
-   - Tuỳ chọn: `PLATFORM_OWNERS=@YOUR_ORG/platform`, `HARNESS_REF` (mặc định `v1`).
+   - Tuỳ chọn: `PLATFORM_OWNERS=@Blended-Asia/platform`, `HARNESS_REF` (mặc định `v1`).
 5. **Rollout**:
    - Chạy org-audit dry-run để xem report.
    - Chạy `fix=true` để mở PR `ci: adopt org harness (v1)` vào từng repo. PR thêm `org-harness.yml`, `org-pr-convention.yml`, `harness.yml`, PR template, CODEOWNERS.

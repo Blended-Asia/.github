@@ -14,4 +14,4 @@ permissions:
 
 jobs:
   org:
-    uses: YOUR_ORG/.github/.github/workflows/pr-convention.yml@v1
+    uses: Blended-Asia/.github/.github/workflows/pr-convention.yml@v1

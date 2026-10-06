@@ -27,7 +27,7 @@ Ngôn ngữ: message, comment trên PR, README đều viết **tiếng Việt**.
   org-audit.yml                                                    # chạy trong repo này: quét cả org
   required-convention.yml required-harness.yml                     # chỉ cho Enterprise ruleset "require workflows"
   self-test.yml                                                    # CI của repo này
-workflow-templates/   caller mà repo con copy (YOUR_ORG, $default-branch là placeholder)
+workflow-templates/   caller mà repo con copy (Blended-Asia, $default-branch là placeholder)
 profiles/             base.yml (policy chung) · rails.yml react.yml node.yml (tool + rule) · starter/ (file mẫu cho repo con)
 scripts/harness/      lib (glob, git, YAML qua ruby, annotation) · config (resolve + detect) · rules (architecture)
                       · stack (chạy tool, so baseline) · verdict (gate) · debt (đo nợ repo cũ trước khi onboard)
@@ -43,7 +43,7 @@ tests/                node:test, chạy offline; integration.test.mjs chạy too
 node --test 'tests/*.test.mjs'                                  # 97 test, ~10s. Cần git, ruby, python3, docker compose (CLI, không cần daemon)
 HARNESS_INTEGRATION=1 node --test tests/integration.test.mjs    # ~2 phút: npm install Next/ESLint/TS, bundle RuboCop, gem Brakeman
 actionlint .github/workflows/*.yml workflow-templates/*.yml     # phải sạch, kể cả shellcheck
-./scripts/init.sh <org>                                         # thay YOUR_ORG trong toàn repo
+./scripts/init.sh <org>                                         # thay Blended-Asia trong toàn repo
 ./scripts/e2e-sandbox.sh <org>/harness-sandbox [e1 e2 …]       # kiểm chứng trên sandbox thật (gh + git), in bảng link PR
 REPOS=a,b ./scripts/apply-ruleset.sh <org> trunk-team|trunk-solo|gitflow-team|gitflow-solo|team|enterprise [active|evaluate|disabled]   # DRY_RUN=true: chỉ in JSON
 ```

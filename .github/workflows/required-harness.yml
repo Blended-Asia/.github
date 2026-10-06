@@ -12,11 +12,11 @@ permissions:
 
 jobs:
   security:
-    uses: YOUR_ORG/.github/.github/workflows/security.yml@v1
+    uses: Blended-Asia/.github/.github/workflows/security.yml@v1
   infra:
-    uses: YOUR_ORG/.github/.github/workflows/infra.yml@v1
+    uses: Blended-Asia/.github/.github/workflows/infra.yml@v1
   stack:
-    uses: YOUR_ORG/.github/.github/workflows/stack.yml@v1
+    uses: Blended-Asia/.github/.github/workflows/stack.yml@v1
   harness:
     needs: [security, infra, stack]
     if: always()
@@ -26,7 +26,7 @@ jobs:
       actions: read
       checks: read
       issues: read
-    uses: YOUR_ORG/.github/.github/workflows/harness.yml@v1
+    uses: Blended-Asia/.github/.github/workflows/harness.yml@v1
     with:
       results: ${{ toJSON(needs) }}
     secrets: inherit

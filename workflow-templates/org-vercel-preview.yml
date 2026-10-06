@@ -12,7 +12,7 @@ jobs:
     if: >-
       github.event.deployment_status.state == 'success' &&
       github.event.deployment_status.creator.login == 'vercel[bot]'
-    uses: YOUR_ORG/.github/.github/workflows/vercel-preview.yml@v1
+    uses: Blended-Asia/.github/.github/workflows/vercel-preview.yml@v1
     with:
       url: ${{ github.event.deployment_status.environment_url || github.event.deployment_status.target_url }}
       # paths: /,/login

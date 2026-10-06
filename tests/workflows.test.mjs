@@ -38,7 +38,7 @@ test('mọi action bên ngoài ghim theo commit SHA 40 ký tự', () => {
       if (u.startsWith('./') || u.startsWith('docker://')) continue;
       if (!/@[0-9a-f]{40}$/.test(u)) bad.push(`${f}: ${u}`);
     }
-    // job gọi reusable workflow của chính org (YOUR_ORG/.github/...@v1) được phép dùng tag
+    // job gọi reusable workflow của chính org (Blended-Asia/.github/...@v1) được phép dùng tag
     for (const job of Object.values(wf.jobs ?? {})) {
       if (job.uses && !/^[\w.-]+\/\.github\/\.github\/workflows\/[\w-]+\.yml@[\w.-]+$/.test(job.uses)) bad.push(`${f}: ${job.uses}`);
     }

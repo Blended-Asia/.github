@@ -197,7 +197,7 @@ test('fix: thêm đủ file, reset branch cũ, bump ref giữ config, không đ�
   const text = Buffer.from(guard.body.content, 'base64').toString();
   assert.match(text, /uses: acme\/\.github\/\.github\/workflows\/security\.yml@v1/);
   assert.match(text, /branches: \[main\]/);
-  assert.doesNotMatch(text, /YOUR_ORG|\$default-branch/);
+  assert.doesNotMatch(text, /Blended-Asia|\$default-branch/);
 
   assert.deepEqual(putPaths('old-ref'), ['.github/workflows/ci.yml']);
   const bumped = Buffer.from(puts('old-ref')[0].body.content, 'base64').toString();

@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   org:
-    uses: YOUR_ORG/.github/.github/workflows/pr-convention.yml@v1
+    uses: Blended-Asia/.github/.github/workflows/pr-convention.yml@v1
     # with:
     #   ticket_pattern: '[A-Z][A-Z0-9_]+-[0-9]+'   # bắt buộc mã Backlog/Jira
     #   require_scope: true
