@@ -1,0 +1,181 @@
+# Reusable: check theo stack + architecture scan, cấu hình bởi .github/harness.yml của repo.
+#   plan          – đọc config, nhận diện profile (rails / react / node) và thư mục
+#   architecture  – rule kiến trúc (mọi ngôn ngữ), mặc định chỉ xét dòng thêm/sửa trong PR
+#   rails         – RuboCop, Brakeman, Packwerk (mỗi thư mục Rails 1 job)
+#   js            – ESLint, tsc, Prettier, dependency-cruiser (mỗi thư mục JS/TS 1 job)
+# Script và profile mặc định được lấy từ repo .github của org tại ref `harness_ref` (repo đó phải public).
+# Trên PR, .github/harness.yml được đọc từ commit BASE: PR không tự nới lỏng luật chấm chính nó.
+name: stack
+
+on:
+  workflow_call:
+    inputs:
+      harness_ref:
+        description: Ref của repo .github chứa scripts/harness và profiles (giữ trùng với @ref của workflow)
+        type: string
+        default: v1
+      config_path:
+        type: string
+        default: .github/harness.yml
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || '' }}
+  CONFIG_PATH: ${{ inputs.config_path }}
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rails: ${{ steps.plan.outputs.rails }}
+      js: ${{ steps.plan.outputs.js }}
+      scope: ${{ steps.plan.outputs.scope }}
+      granularity: ${{ steps.plan.outputs.granularity }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # cần commit base: harness.yml được đọc từ base, PR không tự nới lỏng được
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/.github
+          ref: ${{ inputs.harness_ref }}
+          path: .harness
+          sparse-checkout: |
+            scripts/harness
+            profiles
+          persist-credentials: false
+      # Đưa ra ngoài workspace để ESLint/Prettier của repo không quét nhầm code harness
+      - run: mv .harness "$RUNNER_TEMP/harness"
+      - id: plan
+        env:
+          HARNESS_DIR: ${{ runner.temp }}/harness
+        run: node "$HARNESS_DIR/scripts/harness/config.mjs" plan
+
+  architecture:
+    name: architecture
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/.github
+          ref: ${{ inputs.harness_ref }}
+          path: .harness
+          sparse-checkout: |
+            scripts/harness
+            profiles
+          persist-credentials: false
+      # Đưa ra ngoài workspace để ESLint/Prettier của repo không quét nhầm code harness
+      - run: mv .harness "$RUNNER_TEMP/harness"
+      - name: Rule kiến trúc
+        env:
+          HARNESS_DIR: ${{ runner.temp }}/harness
+        run: |
+          HARNESS_CONFIG_OUT="$RUNNER_TEMP/harness.json" node "$HARNESS_DIR/scripts/harness/config.mjs" plan > /dev/null
+          HARNESS_CONFIG="$RUNNER_TEMP/harness.json" node "$HARNESS_DIR/scripts/harness/rules.mjs"
+
+  rails:
+    name: rails (${{ matrix.path }})
+    needs: plan
+    if: needs.plan.outputs.rails != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.rails) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/.github
+          ref: ${{ inputs.harness_ref }}
+          path: .harness
+          sparse-checkout: |
+            scripts/harness
+            profiles
+          persist-credentials: false
+      # Đưa ra ngoài workspace để ESLint/Prettier của repo không quét nhầm code harness
+      - run: mv .harness "$RUNNER_TEMP/harness"
+      - name: Phiên bản Ruby
+        id: rv
+        env:
+          DIR: ${{ matrix.path }}
+        run: |
+          if [ -f "$DIR/.ruby-version" ] || [ -f "$DIR/.tool-versions" ] || [ -f "$DIR/mise.toml" ]; then v=default; else v=3.4; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: ${{ steps.rv.outputs.version }}
+          working-directory: ${{ matrix.path }}
+          bundler-cache: true
+      - name: RuboCop · Brakeman · Packwerk
+        env:
+          PROFILE_PATH: ${{ matrix.path }}
+          PROFILE_NAME: rails
+          CHECKS: ${{ toJSON(matrix.checks) }}
+          SCOPE: ${{ needs.plan.outputs.scope }}
+          GRANULARITY: ${{ needs.plan.outputs.granularity }}
+          HARNESS_DIR: ${{ runner.temp }}/harness
+        run: node "$HARNESS_DIR/scripts/harness/stack.mjs" rails
+
+  js:
+    name: ${{ matrix.name }} (${{ matrix.path }})
+    needs: plan
+    if: needs.plan.outputs.js != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.js) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/.github
+          ref: ${{ inputs.harness_ref }}
+          path: .harness
+          sparse-checkout: |
+            scripts/harness
+            profiles
+          persist-credentials: false
+      # Đưa ra ngoài workspace để ESLint/Prettier của repo không quét nhầm code harness
+      - run: mv .harness "$RUNNER_TEMP/harness"
+      - name: Phiên bản Node
+        id: nv
+        env:
+          DIR: ${{ matrix.path }}
+        run: |
+          f=""
+          for c in "$DIR/.nvmrc" "$DIR/.node-version" ".nvmrc" ".node-version"; do [ -f "$c" ] && { f="$c"; break; }; done
+          echo "file=$f" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ${{ steps.nv.outputs.file }}
+          node-version: ${{ steps.nv.outputs.file == '' && '24' || '' }}
+      - name: ESLint · tsc · Prettier · dependency-cruiser
+        env:
+          PROFILE_PATH: ${{ matrix.path }}
+          PROFILE_NAME: ${{ matrix.name }}
+          CHECKS: ${{ toJSON(matrix.checks) }}
+          SCOPE: ${{ needs.plan.outputs.scope }}
+          GRANULARITY: ${{ needs.plan.outputs.granularity }}
+          HARNESS_DIR: ${{ runner.temp }}/harness
+        run: node "$HARNESS_DIR/scripts/harness/stack.mjs" js

@@ -1,0 +1,47 @@
+# .github/harness.yml — cấu hình harness cho repo này.
+# Mọi key đều tuỳ chọn. Bỏ trống = dùng mặc định của org (profiles/base.yml + profile của stack).
+# File này được đọc từ branch gốc: sửa ở PR nào thì chỉ có hiệu lực SAU khi PR đó merge.
+
+# Bắt đầu ở chế độ quan sát: harness comment "nếu bật thì sẽ chặn vì…" nhưng không chặn merge.
+# Sau 1–2 tuần, khi đã chỉnh hết báo nhầm, đổi thành enforce (xem docs/onboarding-existing-repo.md).
+enforcement: observe
+
+# Stack của repo. Bỏ trống để tự nhận diện:
+#   Gemfile có rails → rails · package.json có react/next → react · package.json khác → node
+# Monorepo: khai báo từng thư mục.
+# profiles:
+#   - name: rails
+#     path: api
+#   - name: react
+#     path: web
+
+convention:
+  scope: changed            # changed | all
+
+# Bật/tắt tool theo profile
+# checks:
+#   react:
+#     prettier: false
+#   rails:
+#     brakeman: true
+
+architecture:
+  disable: []               # tắt rule mặc định theo id, vd [react/no-ts-ignore]
+  rules: []                 # rule riêng của repo (path tính từ root repo), ví dụ:
+  # - id: web/features-isolated
+  #   paths: ["web/src/features/**"]
+  #   forbid: 'from\s+["'']@/features/(?!shared/)'
+  #   message: Feature không import nội bộ feature khác, đi qua @/features/shared.
+  #   severity: error
+
+review:
+  ai: false                 # bật AI review (secret ANTHROPIC_API_KEY)
+  guidelines: ARCHITECTURE.md
+
+merge:
+  auto: true
+  bot_approve:
+    enabled: true
+    max_lines: 200
+    authors: []             # vd ["renovate[bot]"] để chỉ bot approve PR của các tác giả này
+  # human_required_paths: thay toàn bộ danh sách mặc định nếu khai báo

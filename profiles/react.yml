@@ -1,0 +1,36 @@
+# Profile React / Next.js / Vite.
+checks:
+  eslint: true              # dùng config của repo (eslint.config.*); thiếu config → cảnh báo
+  typecheck: true           # tsc --noEmit nếu có tsconfig.json
+  prettier: true            # chỉ khi repo có config prettier
+  depcruise: true           # dependency-cruiser: vòng import, import devDependency vào code chạy thật...
+  depcruise_dirs: [src, app, lib, components, pages, server, hooks, features]
+
+architecture:
+  rules:
+    - id: react/client-no-server-code
+      security: true            # rule bảo mật: không tắt, không hạ mức khi onboard
+      paths: ["**/*.{ts,tsx,js,jsx}"]
+      if_file_matches: '^\s*["'']use client["'']'
+      forbid: 'process\.env\.(?!NEXT_PUBLIC_|NODE_ENV\b)[A-Z_]+|SERVICE_ROLE|from\s+["''](server-only|@/server/|@/lib/db|@/db/)'
+      message: Client component không đọc env phía server, service role key hay import code server. Chuyển logic sang Server Component, Server Action hoặc route handler.
+      severity: error
+
+    - id: react/shared-components-no-route-import
+      paths: ["src/components/**", "components/**"]
+      forbid: 'from\s+["''](@/|(\.\./)+)(app|pages)/'
+      message: components/ dùng chung không phụ thuộc vào route (app/, pages/). Đưa phần dùng chung xuống components/ hoặc lib/.
+      severity: error
+
+    - id: react/no-dangerous-html
+      security: true            # rule bảo mật: không tắt, không hạ mức khi onboard
+      paths: ["**/*.{tsx,jsx}"]
+      forbid: 'dangerouslySetInnerHTML'
+      message: dangerouslySetInnerHTML dễ gây XSS. Sanitize (vd DOMPurify) và ghi rõ nguồn dữ liệu.
+      severity: warn
+
+    - id: react/no-ts-ignore
+      paths: ["**/*.{ts,tsx}"]
+      forbid: '@ts-ignore'
+      message: Dùng `// @ts-expect-error <lý do>` thay cho @ts-ignore.
+      severity: warn

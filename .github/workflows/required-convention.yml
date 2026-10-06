@@ -1,0 +1,17 @@
+# Chỉ dùng cho GitHub Enterprise Cloud: ruleset "Require workflows to pass" trỏ vào file này
+# (xem rulesets/org-baseline-enterprise.json). Repo con KHÔNG cần copy caller, và không sửa được.
+# Đồng thời là CI cho chính repo .github.
+name: org-pr-convention
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  org:
+    uses: YOUR_ORG/.github/.github/workflows/pr-convention.yml@v1

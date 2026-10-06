@@ -1,0 +1,44 @@
+# Do org quản lý — không sửa trực tiếp. Cấu hình repo nằm ở .github/harness.yml.
+# Required check trên ruleset: "harness / gate"
+name: org-harness
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+  push:
+    branches: [$default-branch]
+  schedule:
+    - cron: "17 1 * * 1" # thứ Hai 08:17 giờ VN: quét lại CVE mới cho code đang chạy
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: org-harness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  security:
+    uses: YOUR_ORG/.github/.github/workflows/security.yml@v1
+
+  infra:
+    uses: YOUR_ORG/.github/.github/workflows/infra.yml@v1
+
+  stack:
+    uses: YOUR_ORG/.github/.github/workflows/stack.yml@v1
+
+  harness:
+    needs: [security, infra, stack]
+    if: always()
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+      checks: read
+      issues: read
+    uses: YOUR_ORG/.github/.github/workflows/harness.yml@v1
+    with:
+      results: ${{ toJSON(needs) }}
+    secrets: inherit

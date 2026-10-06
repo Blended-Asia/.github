@@ -1,0 +1,237 @@
+# Reusable: kiểm tra PR theo convention của org.
+# Gọi từ repo con qua workflow-templates/org-pr-convention.yml
+# Check name hiện trên PR: "org / pr-convention"
+name: pr-convention
+
+on:
+  workflow_call:
+    inputs:
+      title_types:
+        description: Các type Conventional Commits được phép (phân cách bằng dấu phẩy)
+        type: string
+        default: feat,fix,chore,docs,refactor,perf,test,build,ci,revert,style
+      require_scope:
+        type: boolean
+        default: false
+      allowed_scopes:
+        description: Danh sách scope hợp lệ, để trống = scope nào cũng được
+        type: string
+        default: ""
+      title_max_length:
+        type: number
+        default: 72
+      branch_pattern:
+        description: Regex cho tên branch nguồn, để trống = không kiểm tra
+        type: string
+        default: '^(feat|fix|chore|docs|refactor|perf|test|build|ci|hotfix|release|revert)/[a-z0-9._-]+$'
+      ticket_pattern:
+        description: "Regex mã ticket (vd Backlog/Jira: '[A-Z][A-Z0-9_]+-[0-9]+'), để trống = không bắt buộc"
+        type: string
+        default: ""
+      ticket_in:
+        description: Tìm mã ticket ở đâu (title, branch, body)
+        type: string
+        default: title,branch,body
+      required_sections:
+        description: Các heading bắt buộc có nội dung trong PR body (phân cách bằng dấu phẩy hoặc xuống dòng)
+        type: string
+        default: "## Summary,## How to test"
+      require_checklist_done:
+        description: Fail nếu body còn checkbox "- [ ]" chưa tick
+        type: boolean
+        default: false
+      max_changed_lines:
+        type: number
+        default: 800
+      size_mode:
+        description: warn | fail | off
+        type: string
+        default: warn
+      size_exclude:
+        description: Glob các file không tính vào kích thước PR
+        type: string
+        default: "package-lock.json,pnpm-lock.yaml,yarn.lock,bun.lock,bun.lockb,*.snap,*.min.js,**/generated/**,**/database.types.ts"
+      size_labels:
+        description: Tự gắn label size/XS..XL
+        type: boolean
+        default: true
+      check_commits:
+        description: Kiểm tra từng commit message (thường không cần nếu merge kiểu squash)
+        type: boolean
+        default: false
+      ignore_bots:
+        type: boolean
+        default: true
+      comment:
+        description: Ghi sticky comment tóm tắt lỗi lên PR
+        type: boolean
+        default: true
+
+jobs:
+  check:
+    name: pr-convention
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check PR convention
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          INPUTS: ${{ toJSON(inputs) }}
+        with:
+          script: |
+            // ---- org-pr-convention:begin ----
+            if (!context.payload.pull_request) {
+              core.info(`Event ${context.eventName}: không có PR payload, convention đã được kiểm tra lúc mở PR.`);
+              return;
+            }
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            // Luôn đọc trạng thái PR hiện tại: re-run một run cũ (payload cũ) không thể "xanh hoá" PR đã bị sửa sai
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: context.payload.pull_request.number });
+            const I = JSON.parse(process.env.INPUTS);
+            const MARKER = '<!-- org-pr-convention -->';
+            const list = (s) => String(s ?? '').split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
+            const errors = [];
+            const warnings = [];
+
+            const isBot = pr.user?.type === 'Bot' || /\[bot\]$/.test(pr.user?.login ?? '');
+            if (I.ignore_bots && isBot) {
+              core.info(`PR của bot (${pr.user.login}), bỏ qua convention.`);
+              return;
+            }
+
+            // 1) Title: Conventional Commits
+            const types = list(I.title_types);
+            const title = pr.title.trim();
+            const m = title.match(/^([a-z]+)(?:\(([^()\s]+)\))?(!)?: (\S.*)$/);
+            if (!m) {
+              errors.push(['Title', `\`${title}\` không đúng dạng \`type(scope): mô tả\`. Type hợp lệ: ${types.join(', ')}`]);
+            } else {
+              const [, type, scope, , subject] = m;
+              if (!types.includes(type)) errors.push(['Title', `type \`${type}\` không hợp lệ. Dùng một trong: ${types.join(', ')}`]);
+              if (I.require_scope && !scope) errors.push(['Title', 'thiếu scope, vd `feat(auth): ...`']);
+              const scopes = list(I.allowed_scopes);
+              if (scope && scopes.length && !scopes.includes(scope)) errors.push(['Title', `scope \`${scope}\` không nằm trong: ${scopes.join(', ')}`]);
+              if (/[.。]$/.test(subject)) warnings.push(['Title', 'không nên kết thúc bằng dấu chấm']);
+            }
+            if (title.length > I.title_max_length) errors.push(['Title', `dài ${title.length} ký tự (tối đa ${I.title_max_length})`]);
+
+            // 2) Branch name
+            const branch = pr.head.ref;
+            if (I.branch_pattern && !new RegExp(I.branch_pattern).test(branch)) {
+              errors.push(['Branch', `\`${branch}\` không khớp \`${I.branch_pattern}\``]);
+            }
+
+            // 3) Body sections + checklist
+            const rawBody = (pr.body ?? '').replace(/\r\n/g, '\n');
+            const body = rawBody.replace(/<!--[\s\S]*?-->/g, '');
+            const isHeading = (l) => /^#{1,6}\s+\S/.test(l);
+            const norm = (h) => h.replace(/^#{1,6}\s*/, '').trim().toLowerCase();
+            const sectionContent = (md, heading) => {
+              const lines = md.split('\n');
+              const start = lines.findIndex((l) => isHeading(l) && norm(l) === norm(heading));
+              if (start < 0) return null;
+              const out = [];
+              for (let i = start + 1; i < lines.length && !isHeading(lines[i]); i++) out.push(lines[i]);
+              return out.join('\n').trim();
+            };
+            for (const sec of list(I.required_sections)) {
+              const c = sectionContent(body, sec);
+              if (c === null) errors.push(['Body', `thiếu section \`${sec}\``]);
+              else if (!c) errors.push(['Body', `section \`${sec}\` đang trống (ghi "N/A" nếu không áp dụng)`]);
+            }
+            if (I.require_checklist_done && /^\s*[-*] \[ \]/m.test(body)) {
+              errors.push(['Checklist', 'còn mục `- [ ]` chưa tick']);
+            }
+
+            // 4) Ticket
+            if (I.ticket_pattern) {
+              const re = new RegExp(I.ticket_pattern);
+              const hay = { title, branch, body };
+              const where = list(I.ticket_in);
+              if (!where.some((w) => re.test(hay[w] ?? ''))) {
+                errors.push(['Ticket', `không tìm thấy mã ticket khớp \`${I.ticket_pattern}\` trong ${where.join('/')}`]);
+              }
+            }
+
+            // 5) Size (bỏ qua lockfile, file generate)
+            const globToRe = (g) => {
+              const anchored = g.includes('/');
+              let s = g.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+                .replace(/\*\*\//g, '\u0001').replace(/\*\*/g, '\u0002')
+                .replace(/\*/g, '\u0003').replace(/\?/g, '\u0004');
+              s = s.replace(/\u0001/g, '(?:.*/)?').replace(/\u0002/g, '.*')
+                .replace(/\u0003/g, '[^/]*').replace(/\u0004/g, '[^/]');
+              return new RegExp(`^${anchored ? '' : '(?:.*/)?'}${s}$`);
+            };
+            let changed = pr.additions + pr.deletions;
+            if (I.size_mode !== 'off' || I.size_labels) {
+              try {
+                const excludes = list(I.size_exclude).map(globToRe);
+                const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: pr.number, per_page: 100 });
+                changed = files.filter((f) => !excludes.some((re) => re.test(f.filename)))
+                  .reduce((n, f) => n + f.additions + f.deletions, 0);
+              } catch (e) {
+                core.warning(`Không lấy được danh sách file, dùng tổng additions+deletions: ${e.message}`);
+              }
+              if (I.size_mode !== 'off' && changed > I.max_changed_lines) {
+                const item = ['Size', `${changed} dòng thay đổi (ngưỡng ${I.max_changed_lines}). Nên tách PR nhỏ hơn`];
+                (I.size_mode === 'fail' ? errors : warnings).push(item);
+              }
+            }
+
+            // 6) Commit messages (tuỳ chọn)
+            if (I.check_commits) {
+              const commits = await github.paginate(github.rest.pulls.listCommits, { owner, repo, pull_number: pr.number, per_page: 100 });
+              const re = new RegExp(`^(${types.join('|')})(\\([^()\\s]+\\))?!?: \\S`);
+              const bad = commits.map((c) => c.commit.message.split('\n')[0])
+                .filter((msg) => !re.test(msg) && !/^(Merge|Revert) /.test(msg));
+              if (bad.length) errors.push(['Commits', `${bad.length} commit sai format, vd: \`${bad[0]}\``]);
+            }
+
+            // ---- Báo cáo ----
+            const draft = pr.draft === true;
+            const ok = errors.length === 0;
+            const rows = [...errors.map(([k, v]) => `| ❌ | ${k} | ${v} |`), ...warnings.map(([k, v]) => `| ⚠️ | ${k} | ${v} |`)];
+            const head = ok
+              ? (warnings.length ? `### ✅ PR convention: đạt (${warnings.length} cảnh báo)` : '### ✅ PR convention: đạt')
+              : `### ❌ PR convention: ${errors.length} lỗi${warnings.length ? `, ${warnings.length} cảnh báo` : ''}`;
+            const note = draft && !ok ? '\n\n> PR đang ở chế độ draft: chưa chặn, sẽ bắt buộc khi chuyển sang Ready for review.' : '';
+            const table = rows.length ? `\n\n| | Mục | Chi tiết |\n|---|---|---|\n${rows.join('\n')}` : '';
+            const md = `${MARKER}\n${head}${table}${note}\n\n<sub>Convention của org · sửa title/body là check tự chạy lại.</sub>`;
+            await core.summary.addRaw(md.replace(MARKER, '')).write();
+
+            if (I.size_labels) {
+              const size = changed <= 50 ? 'XS' : changed <= 200 ? 'S' : changed <= 500 ? 'M' : changed <= 1000 ? 'L' : 'XL';
+              try {
+                const want = `size/${size}`;
+                const current = pr.labels.map((l) => l.name);
+                for (const l of current.filter((n) => n.startsWith('size/') && n !== want)) {
+                  await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name: l });
+                }
+                if (!current.includes(want)) await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [want] });
+              } catch (e) {
+                core.info(`Bỏ qua gắn label (token không có quyền ghi, vd PR từ fork): ${e.message}`);
+              }
+            }
+
+            if (I.comment) {
+              try {
+                const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 });
+                const prev = comments.find((c) => c.body?.startsWith(MARKER));
+                if (prev && prev.body !== md) await github.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body: md });
+                else if (!prev && rows.length) await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body: md });
+              } catch (e) {
+                core.info(`Bỏ qua comment (token không có quyền ghi): ${e.message}`);
+              }
+            }
+
+            for (const [k, v] of warnings) core.warning(`${k}: ${v}`);
+            if (!ok) {
+              for (const [k, v] of errors) (draft ? core.warning : core.error)(`${k}: ${v}`);
+              if (!draft) core.setFailed(`PR chưa đạt convention (${errors.length} lỗi)`);
+            }
+            // ---- org-pr-convention:end ----

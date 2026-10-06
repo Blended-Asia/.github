@@ -1,0 +1,22 @@
+# Starter RuboCop cho Rails. Thêm vào Gemfile (group :development, :test):
+#   gem "rubocop-rails-omakase", require: false
+# Gemfile cần có dòng `ruby file: ".ruby-version"` (Rails 7.1+ có sẵn), nếu không RuboCop
+# sẽ parse bằng cú pháp Ruby 2.7 và báo lỗi Lint/Syntax giả.
+inherit_gem:
+  rubocop-rails-omakase: rubocop.yml
+
+AllCops:
+  NewCops: enable
+  Exclude:
+    - "bin/**/*"
+    - "db/schema.rb"
+    - "db/*_schema.rb"
+    - "node_modules/**/*"
+    - "vendor/**/*"
+    - "tmp/**/*"
+
+# Quy ước thêm của org
+Rails/Output:
+  Enabled: true
+Lint/Debugger:
+  Enabled: true

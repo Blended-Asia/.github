@@ -1,0 +1,98 @@
+# Quét toàn org hằng tuần → cập nhật issue "Org compliance report" trong repo này.
+# Chạy tay với fix=true để mở PR áp dụng workflow chuẩn cho các repo còn thiếu.
+name: org-audit
+
+on:
+  schedule:
+    - cron: "43 0 * * 1" # thứ Hai 07:43 giờ VN
+  workflow_dispatch:
+    inputs:
+      fix:
+        description: Mở PR sửa cho repo chưa đạt
+        type: boolean
+        default: false
+      only:
+        description: Chỉ quét các repo này (phân cách dấu phẩy), để trống = tất cả
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: org-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Token GitHub App (đọc mọi repo trong org)
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.ORG_AUDIT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.ORG_AUDIT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Repo này public hay private?
+        id: vis
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REPORT_REPO: ${{ vars.AUDIT_REPORT_REPO }}
+        run: |
+          vis=$(gh repo view "$REPO" --json visibility --jq .visibility)
+          public=$([ "$vis" = "PUBLIC" ] && echo true || echo false)
+          # Log, summary, artifact của repo public ai cũng xem được → report phải đi vào repo private
+          target="$REPORT_REPO"
+          [ -z "$target" ] && [ "$public" = "false" ] && target="${REPO#*/}"
+          { echo "public=$public"; echo "target=$target"; } | tee -a "$GITHUB_OUTPUT"
+          if [ "$public" = "true" ] && [ -z "$target" ]; then
+            echo "::warning::Repo này public: đặt variable AUDIT_REPORT_REPO (một repo private) để nhận report."
+          fi
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Audit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ORG: ${{ github.repository_owner }}
+          FIX: ${{ inputs.fix || 'false' }}
+          ONLY: ${{ inputs.only }}
+          GUARD_REF: ${{ vars.HARNESS_REF || 'v1' }}
+          PLATFORM_OWNERS: ${{ vars.PLATFORM_OWNERS }}
+          QUIET: ${{ steps.vis.outputs.public }}
+        run: node scripts/org-audit.mjs
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.vis.outputs.public == 'false'
+        with:
+          name: org-audit-report
+          path: report.*
+          retention-days: 30
+
+      - name: Cập nhật issue "Org compliance report"
+        if: steps.vis.outputs.target != ''
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository_owner }}/${{ steps.vis.outputs.target }}
+        run: |
+          if [ "$(gh repo view "$REPO" --json visibility --jq .visibility)" = "PUBLIC" ]; then
+            echo "::error::Repo nhận report phải là private."; exit 1
+          fi
+          gh label create org-audit --repo "$REPO" --color 5319e7 --description "Org compliance report" 2>/dev/null || true
+          n=$(gh issue list --repo "$REPO" --label org-audit --state open --json number --jq '.[0].number')
+          if [ -n "$n" ]; then
+            gh issue edit "$n" --repo "$REPO" --body-file report.md > /dev/null
+          else
+            gh issue create --repo "$REPO" --title "Org compliance report" --label org-audit --body-file report.md > /dev/null
+          fi
+          echo "Đã cập nhật report."

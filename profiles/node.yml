@@ -1,0 +1,24 @@
+# Profile Node.js (API, worker, script).
+checks:
+  eslint: true
+  typecheck: true
+  prettier: true
+  depcruise: true
+  depcruise_dirs: [src, lib, server, app]
+
+architecture:
+  rules:
+    - id: node/no-sql-string-building
+      security: true            # rule bảo mật: không tắt, không hạ mức khi onboard
+      paths: ["**/*.{ts,js,mjs,cjs}"]
+      exclude: ["**/*.test.*", "**/*.spec.*", "**/migrations/**"]
+      forbid: '\.(query|execute|raw|unsafe)\(\s*`[^`]*\$\{|\.(query|execute|raw|unsafe)\(\s*["''][^"'']*["'']\s*\+'
+      message: Không ghép chuỗi vào SQL. Dùng parameterized query ($1, ?) hoặc query builder.
+      severity: error
+
+    - id: node/no-console-log
+      paths: ["src/**/*.{ts,js,mjs}"]
+      exclude: ["**/*.test.*", "**/*.spec.*", "**/scripts/**"]
+      forbid: '\bconsole\.(log|debug)\('
+      message: Dùng logger có level thay cho console.log.
+      severity: warn

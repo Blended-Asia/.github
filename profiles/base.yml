@@ -1,0 +1,100 @@
+# Mặc định chung cho mọi repo. Repo ghi đè bằng .github/harness.yml (cùng cấu trúc).
+
+# enforce: gate đỏ khi chưa đạt, bot approve + auto-merge khi đạt.
+# observe: chấm và comment như thật nhưng KHÔNG chặn, KHÔNG tự approve/merge — dùng khi onboard repo có sẵn.
+enforcement: enforce
+convention:
+  scope: changed            # changed: chỉ bắt lỗi ở dòng/file thay đổi trong PR · all: toàn bộ repo
+  granularity: line         # line: lint/format/tsc chỉ chặn lỗi ở dòng sửa hoặc lỗi mới so với base (hợp repo cũ)
+                            # file: file nào PR chạm vào thì phải sạch hoàn toàn (hợp repo mới)
+
+review:
+  ai: false                 # true: bật AI review (cần secret ANTHROPIC_API_KEY ở org/repo)
+  diff_exclude:             # bỏ khỏi diff gửi AI (nhiễu, tốn token). Lockfile đã luôn cần người duyệt.
+    - "**/package-lock.json"
+    - "**/pnpm-lock.yaml"
+    - "**/yarn.lock"
+    - "**/bun.lock"
+    - "**/Gemfile.lock"
+  model: claude-sonnet-5-5
+  language: vi              # ngôn ngữ comment của AI
+  block_on: [critical, major]
+  guidelines: ARCHITECTURE.md   # tài liệu kiến trúc để AI đối chiếu (nếu có)
+  max_diff_chars: 120000
+  fail_closed: false        # true: AI lỗi/timeout thì chặn merge
+  override_label: "harness:override-ai"   # người có quyền maintain/admin (khác tác giả PR) gắn label này để bỏ qua blocker của AI
+
+merge:
+  auto: true                # harness đạt → bật auto-merge (GitHub vẫn chờ đủ required checks + review)
+  method: squash            # squash | merge | rebase
+  bot_approve:              # bot approve thay người khi thoả TẤT CẢ điều kiện
+    enabled: true
+    max_lines: 200          # tổng dòng thay đổi của mọi file (kể cả file generate)
+    authors: []             # rỗng = mọi tác giả; vd ["renovate[bot]", "my-agent[bot]"]
+  # Đụng các path này → bot không bao giờ approve, phải có người review.
+  # Luôn cộng thêm (không tắt được): .github/**, CODEOWNERS.
+  human_required_paths:
+    # dữ liệu, hạ tầng, bảo mật
+    - "**/migrations/**"
+    - "db/migrate/**"
+    - "db/schema.rb"
+    - "supabase/**"
+    - "**/auth/**"
+    - "config/credentials/**"
+    - "config/initializers/**"
+    - "Dockerfile"
+    - "**/Dockerfile*"
+    # dependency (manifest + lockfile: tránh đổi resolved/integrity lén lút)
+    - "**/package.json"
+    - "**/Gemfile"
+    - "**/Gemfile.lock"
+    - "**/package-lock.json"
+    - "**/pnpm-lock.yaml"
+    - "**/yarn.lock"
+    - "**/bun.lock"
+    - "**/.npmrc"
+    - "**/.yarnrc*"
+    # config của chính các tool chấm điểm và file "bỏ qua lỗi"
+    - "**/.rubocop*.yml"
+    - "**/eslint.config.*"
+    - "**/.eslintrc*"
+    - "**/.eslintignore"
+    - "**/tsconfig*.json"
+    - "**/.prettier*"
+    - "**/prettier.config.*"
+    - "**/.dependency-cruiser.*"
+    - "**/config/brakeman.ignore"
+    - "**/packwerk.yml"
+    - "**/package_todo.yml"
+    - "**/.trivyignore*"
+    - "**/trivy.y*ml"
+    - "**/.semgrepignore"
+    - "**/.hadolint.y*ml"
+  # Dòng mới chứa các marker này → cần người duyệt (đang tắt kiểm tra có chủ đích)
+  suppression_markers:
+    - "harness-disable-line"
+    - "nosemgrep"
+    - "eslint-disable"
+    - "rubocop:disable"
+    - "@ts-ignore"
+    - "@ts-nocheck"
+    - "@ts-expect-error"
+    - "/* eslint "
+    - "/*eslint "
+    - "eslint-env"
+    - "rubocop:todo"
+    - "brakeman:ignore"
+    - "trivy:ignore"
+    - "prettier-ignore"
+    - "hadolint ignore"
+  # Chỉ dùng để hiển thị "quy mô" (không ảnh hưởng ngưỡng bot approve)
+  size_exclude:
+    - "**/package-lock.json"
+    - "**/pnpm-lock.yaml"
+    - "**/yarn.lock"
+    - "**/bun.lock"
+    - "**/Gemfile.lock"
+    - "**/*.snap"
+    - "**/generated/**"
+    - "**/database.types.ts"
+    - "db/schema.rb"

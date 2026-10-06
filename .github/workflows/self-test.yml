@@ -1,0 +1,51 @@
+# CI cho chính repo .github: lint workflow + test logic trước khi dời tag release.
+name: self-test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+          ./actionlint -color .github/workflows/*.yml workflow-templates/*.yml
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Unit tests
+        run: node --test 'tests/*.test.mjs'
+
+  # Chạy tool thật (Next.js/ESLint/tsc/Prettier/dependency-cruiser, RuboCop/Brakeman) trên repo mẫu,
+  # để phát hiện sớm khi tool đổi format output.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: "3.4"
+      - name: Integration tests
+        env:
+          HARNESS_INTEGRATION: "1"
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name ci
+          node --test tests/integration.test.mjs

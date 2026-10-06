@@ -1,0 +1,24 @@
+# Do org quản lý — không sửa trực tiếp, đổi config qua `with:` bên dưới.
+name: org-pr-convention
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: org-pr-convention-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  org:
+    uses: YOUR_ORG/.github/.github/workflows/pr-convention.yml@v1
+    # with:
+    #   ticket_pattern: '[A-Z][A-Z0-9_]+-[0-9]+'   # bắt buộc mã Backlog/Jira
+    #   require_scope: true
+    #   allowed_scopes: api,web,db,infra
+    #   size_mode: fail

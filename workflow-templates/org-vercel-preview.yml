@@ -1,0 +1,20 @@
+# Do org quản lý. Chạy sau khi Vercel deploy preview thành công (check tham khảo, không bắt buộc).
+name: org-vercel-preview
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.creator.login == 'vercel[bot]'
+    uses: YOUR_ORG/.github/.github/workflows/vercel-preview.yml@v1
+    with:
+      url: ${{ github.event.deployment_status.environment_url || github.event.deployment_status.target_url }}
+      # paths: /,/login
+    secrets:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}

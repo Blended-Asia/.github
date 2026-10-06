@@ -1,0 +1,222 @@
+# Reusable: security baseline cho mọi repo (không phụ thuộc GitHub Advanced Security).
+#   secrets       – TruffleHog quét secret trong diff/commit + chặn commit file .env + biến public lộ secret
+#   dependencies  – Trivy quét CVE trong lockfile (npm/pnpm/yarn/pip/go/...)
+#   sast          – Semgrep, trên PR chỉ báo lỗi MỚI so với base (baseline)
+# Bỏ qua finding đã chấp nhận: .trivyignore, // nosemgrep, .semgrepignore ở repo con.
+name: security
+
+on:
+  workflow_call:
+    inputs:
+      fail_severity:
+        description: Mức CVE làm fail (Trivy)
+        type: string
+        default: HIGH,CRITICAL
+      ignore_unfixed:
+        description: Bỏ qua CVE chưa có bản vá
+        type: boolean
+        default: true
+      semgrep:
+        type: boolean
+        default: true
+      semgrep_config:
+        description: Ruleset Semgrep (cách nhau bằng dấu cách)
+        type: string
+        default: p/default
+      semgrep_severity:
+        description: Mức finding Semgrep làm fail
+        type: string
+        default: ERROR
+      env_file_allowlist:
+        description: Regex các file .env được phép commit
+        type: string
+        default: '\.env\.(example|sample|template|defaults)$'
+      public_env_prefixes:
+        description: Prefix biến môi trường bị bundle ra client
+        type: string
+        default: NEXT_PUBLIC_|VITE_|EXPO_PUBLIC_|PUBLIC_|REACT_APP_|NUXT_PUBLIC_
+      fail_on:
+        description: "Trên PR: new = chỉ chặn CVE mới so với lockfile của base (nợ cũ chỉ báo cáo) · all = chặn mọi CVE"
+        type: string
+        default: new
+      trivy_version:
+        type: string
+        default: "0.75.0"
+      semgrep_version:
+        type: string
+        default: "1.179.0"
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || '' }}
+
+jobs:
+  secrets:
+    name: secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: TruffleHog (verified + unknown secrets)
+        uses: trufflesecurity/trufflehog@4dd8831c5f12599465d4d45c3c447b4018a34c85 # v3.97.9
+        with:
+          # merge_group không được action tự xử lý → truyền base/head rõ ràng để không quét lại toàn bộ lịch sử
+          base: ${{ github.event.merge_group.base_sha || '' }}
+          head: ${{ github.event.merge_group.head_sha || '' }}
+          extra_args: --results=verified,unknown
+
+      - name: Không commit file .env / thư mục .vercel
+        env:
+          ALLOW: ${{ inputs.env_file_allowlist }}
+        run: |
+          bad=$(git ls-files | grep -E '(^|/)\.env(\.[^/]+)?$' | grep -vE "$ALLOW" || true)
+          vercel=$(git ls-files | grep -E '(^|/)\.vercel/' || true)
+          rc=0
+          for f in $bad; do echo "::error file=$f::File env bị commit. Xoá khỏi git (git rm --cached), thêm vào .gitignore và ROTATE các secret bên trong."; rc=1; done
+          for f in $vercel; do echo "::error file=$f::Thư mục .vercel/ không được commit (có thể chứa .env.*.local từ 'vercel pull')."; rc=1; done
+          [ $rc -eq 0 ] && echo "OK: không có file env/.vercel bị commit"
+          exit $rc
+
+      - name: Biến public không được mang tên secret
+        env:
+          PREFIXES: ${{ inputs.public_env_prefixes }}
+        run: |
+          # vd NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY → bị bundle vào JS phía client.
+          # PR: chỉ xét dòng thêm mới (nợ cũ không chặn mọi PR). Push/schedule: quét toàn repo.
+          python3 - <<'PY'
+          # ---- public-env:begin ----
+          import os, re, subprocess, sys
+          base = os.environ.get("BASE_SHA", "")
+          pattern = re.compile(r"\b(" + os.environ["PREFIXES"] + r")[A-Z0-9_]*(SERVICE_ROLE|SECRET|PRIVATE|PASSWORD|DB_URL|DATABASE_URL)[A-Z0-9_]*\b")
+          specs = ["*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.vue", "*.svelte", "*.astro", "*.env*",
+                   ":(exclude,glob)**/node_modules/**", ":(exclude,glob)**/tests/**", ":(exclude,glob)**/__tests__/**",
+                   ":(exclude,glob)**/*.test.*", ":(exclude,glob)**/*.spec.*"]
+          hits = []
+          if base:
+              out = subprocess.run(["git", "-c", "core.quotePath=false", "diff", "-U0", "--no-color", f"{base}...HEAD", "--", *specs],
+                                   capture_output=True, text=True, check=True).stdout
+              f, n = None, 0
+              for l in out.split("\n"):
+                  if l.startswith("+++ "):
+                      f = None if l == "+++ /dev/null" else l[6:]
+                  elif l.startswith("@@"):
+                      n = int(re.search(r"\+(\d+)", l).group(1))
+                  elif f and l.startswith("+"):
+                      if pattern.search(l[1:]): hits.append((f, n))
+                      n += 1
+          else:
+              out = subprocess.run(["git", "grep", "-nIE", pattern.pattern, "--", *specs], capture_output=True, text=True).stdout
+              for l in out.splitlines():
+                  f, n, _ = l.split(":", 2)
+                  hits.append((f, int(n)))
+          for f, n in hits:
+              print(f"::error file={f},line={n}::Biến có prefix public nhưng tên giống secret, sẽ lộ ra trình duyệt.")
+          print("OK" if not hits else f"{len(hits)} vi phạm")
+          sys.exit(1 if hits else 0)
+          # ---- public-env:end ----
+          PY
+
+  dependencies:
+    name: dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Trivy filesystem scan (PR và base)
+        env:
+          TRIVY_VERSION: ${{ inputs.trivy_version }}
+          SEVERITY: ${{ inputs.fail_severity }}
+          IGNORE_UNFIXED: ${{ inputs.ignore_unfixed }}
+          FAIL_ON: ${{ inputs.fail_on }}
+        run: |
+          out="$RUNNER_TEMP/trivy"; mkdir -p "$out" "$RUNNER_TEMP/trivy-cache"
+          # --config trỏ vào file rỗng: không để trivy.yaml trong PR tự tắt/bỏ qua file khi quét chính nó
+          : > "$out/empty.yaml"
+          args=(fs --config /out/empty.yaml --scanners vuln --severity "$SEVERITY" --format json --skip-dirs node_modules --exit-code 0)
+          [ "$IGNORE_UNFIXED" = "true" ] && args+=(--ignore-unfixed)
+          scan() {
+            docker run --rm -v "$1:/src" -v "$out:/out" -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" -w /src \
+              "ghcr.io/aquasecurity/trivy:${TRIVY_VERSION}" "${args[@]}" --output "/out/$2" .
+          }
+          scan "$PWD" head.json
+          if [ -n "$BASE_SHA" ] && [ "$FAIL_ON" = "new" ]; then
+            # Quét lockfile của base để chỉ chặn CVE do PR đưa vào; CVE có sẵn chỉ báo cáo
+            git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
+            scan "$RUNNER_TEMP/base" base.json
+          fi
+
+      - name: Báo cáo + quyết định
+        env:
+          SEV: ${{ inputs.fail_severity }}
+        run: |
+          python3 - <<'PY'
+          # ---- trivy-vuln:begin ----
+          import json, os, sys
+          from collections import Counter
+          out = os.path.join(os.environ["RUNNER_TEMP"], "trivy")
+          def rows_of(path):
+              data = json.load(open(path))
+              return [(v["Severity"], r["Target"], v["PkgName"], v.get("InstalledVersion", ""), v.get("FixedVersion") or "-", v["VulnerabilityID"])
+                      for r in data.get("Results") or [] for v in r.get("Vulnerabilities") or []]
+          rows = sorted(rows_of(os.path.join(out, "head.json")), key=lambda x: (x[0] != "CRITICAL", x[1], x[2]))
+          base_path = os.path.join(out, "base.json")
+          # Đếm theo số lần (không phải tập hợp): thêm bản thứ hai của cùng package + CVE vẫn là lỗi mới
+          left = Counter((t, p, vid) for _, t, p, _, _, vid in rows_of(base_path)) if os.path.exists(base_path) else None
+          new, old = [], []
+          for r in rows:
+              k = (r[1], r[2], r[5])
+              if left is not None and left[k] > 0:
+                  left[k] -= 1
+                  old.append(r)
+              else:
+                  new.append(r)
+          table = lambda rs: "| Mức | File | Package | Đang dùng | Bản vá | ID |\n|---|---|---|---|---|---|\n" + "".join("| " + " | ".join(r) + " |\n" for r in rs[:50]) + (f"\n…và {len(rs)-50} mục khác\n" if len(rs) > 50 else "")
+          with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as s:
+              sev = os.environ.get("SEV", "HIGH,CRITICAL")
+              if left is None:
+                  s.write(f"### Dependencies: {len(rows)} lỗ hổng ({sev})\n\n" + (table(rows) if rows else ""))
+              else:
+                  s.write(f"### Dependencies: {len(new)} lỗ hổng MỚI do PR, {len(old)} có sẵn từ base ({sev})\n\n")
+                  if new: s.write("**Mới (chặn):**\n\n" + table(new) + "\n")
+                  if old: s.write(f"<details><summary>Nợ có sẵn (không chặn): {len(old)}</summary>\n\n" + table(old) + "\n</details>\n")
+          for sev, target, pkg, inst, fix, vid in new:
+              print(f"::error file={target}::{vid} {sev} {pkg}@{inst} → nâng lên {fix}")
+          if old:
+              print(f"::warning::{len(old)} lỗ hổng có sẵn từ trước (không chặn PR này). Xem summary và report hằng tuần.")
+          sys.exit(1 if new else 0)
+          # ---- trivy-vuln:end ----
+          PY
+
+  sast:
+    name: sast
+    if: inputs.semgrep
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Semgrep
+        env:
+          SEMGREP_VERSION: ${{ inputs.semgrep_version }}
+          CONFIGS: ${{ inputs.semgrep_config }}
+          SEVERITY: ${{ inputs.semgrep_severity }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || '' }}
+        run: |
+          args=(scan --metrics=off --error --severity "$SEVERITY" --exclude node_modules)
+          for c in $CONFIGS; do args+=(--config "$c"); done
+          # Trên PR: chỉ fail với finding mới so với base, không bắt sửa nợ cũ
+          [ -n "$BASE_SHA" ] && args+=(--baseline-commit "$BASE_SHA")
+          pipx run --spec "semgrep==${SEMGREP_VERSION}" semgrep "${args[@]}"
