@@ -35,7 +35,7 @@ architecture:
   #   severity: error
 
 review:
-  ai: false                 # bật AI review (secret ANTHROPIC_API_KEY)
+  ai: false                 # bật AI review (secret OPENAI_API_KEY; provider/model xem profiles/base.yml)
   guidelines: ARCHITECTURE.md
 
 merge:

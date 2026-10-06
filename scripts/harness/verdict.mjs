@@ -143,25 +143,58 @@ export async function aiReview({ fetchImpl, apiKey, policy, pr, diff, guidelines
     `<linter_findings>\n${findings.slice(0, 60).map((f) => `- ${f.where} ${f.message}`).join('\n') || '(không có)'}\n</linter_findings>`,
     `<diff>\n${diff}\n</diff>`,
   ].join('\n\n');
-  const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: policy.review.model,
-      max_tokens: 8000,
-      system,
-      messages: [{ role: 'user', content: user }],
-      output_config: { format: { type: 'json_schema', schema: REVIEW_SCHEMA } },
-    }),
-  });
-  if (!res.ok) throw new Error(`Claude API ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const data = await res.json();
-  if (data.stop_reason === 'max_tokens') throw new Error('Claude API: kết quả bị cắt (max_tokens)');
-  const text = (data.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('');
-  const out = JSON.parse(text);
+  const provider = policy.review.provider || 'openai';
+  const call = PROVIDERS[provider];
+  if (!call) throw new Error(`review.provider không hỗ trợ: ${provider} (chỉ ${Object.keys(PROVIDERS).join(', ')})`);
+  const model = policy.review.model || DEFAULT_MODELS[provider];
+  const out = await call({ fetchImpl, apiKey, model, system, user });
   out.comments = (out.comments ?? []).filter((c) => SEVERITIES.includes(c.severity));
   return out;
 }
+
+export const DEFAULT_MODELS = { openai: 'gpt-5', anthropic: 'claude-sonnet-5-5' };
+export const API_KEY_ENV = { openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY' };
+
+const PROVIDERS = {
+  // Chat Completions + Structured Outputs (strict): schema mọi object phải additionalProperties:false, mọi field required
+  async openai({ fetchImpl, apiKey, model, system, user }) {
+    const res = await fetchImpl('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        max_completion_tokens: 16000, // model reasoning tính cả token suy luận vào đây
+        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+        response_format: { type: 'json_schema', json_schema: { name: 'pr_review', strict: true, schema: REVIEW_SCHEMA } },
+      }),
+    });
+    if (!res.ok) throw new Error(`OpenAI API ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const data = await res.json();
+    const choice = data.choices?.[0];
+    if (!choice) throw new Error('OpenAI API: không có choices trong kết quả');
+    if (choice.message?.refusal) throw new Error(`OpenAI API từ chối: ${String(choice.message.refusal).slice(0, 200)}`);
+    if (choice.finish_reason === 'length') throw new Error('OpenAI API: kết quả bị cắt (length)');
+    if (choice.finish_reason === 'content_filter') throw new Error('OpenAI API: bị content_filter chặn');
+    return JSON.parse(choice.message?.content ?? '');
+  },
+  async anthropic({ fetchImpl, apiKey, model, system, user }) {
+    const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        max_tokens: 8000,
+        system,
+        messages: [{ role: 'user', content: user }],
+        output_config: { format: { type: 'json_schema', schema: REVIEW_SCHEMA } },
+      }),
+    });
+    if (!res.ok) throw new Error(`Claude API ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const data = await res.json();
+    if (data.stop_reason === 'max_tokens') throw new Error('Claude API: kết quả bị cắt (max_tokens)');
+    return JSON.parse((data.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join(''));
+  },
+};
 
 // ---------- Báo cáo ----------
 const short = (s, n = 220) => (String(s).length > n ? `${String(s).slice(0, n)}…` : String(s)).replace(/\n/g, ' ').replace(/\|/g, '\\|');
@@ -286,12 +319,14 @@ export async function main(env = process.env, { fetchImpl = globalThis.fetch } =
   let aiNote = null;
   let aiReused = null;
   const aiOn = policy.review?.ai === true;
+  const aiKeyName = API_KEY_ENV[policy.review?.provider || 'openai'] ?? 'OPENAI_API_KEY';
+  const aiKey = env[aiKeyName];
   const prior = reviews.find((rv) => byBot(rv) && rv.body?.includes(AI_MARKER(pr.head.sha)));
   if (aiOn && prior) {
     const m = /blockers=(\d+) verdict=(\w+)/.exec(prior.body);
     aiReused = { blockers: Number(m?.[1] ?? 0), verdict: m?.[2] ?? 'approve' };
     aiNote = `Dùng lại kết quả AI review đã có cho commit \`${pr.head.sha.slice(0, 7)}\` (${aiReused.blockers} blocker). Push commit mới để review lại.`;
-  } else if (aiOn && !env.ANTHROPIC_API_KEY) aiNote = 'AI review đang bật nhưng thiếu secret ANTHROPIC_API_KEY.';
+  } else if (aiOn && !aiKey) aiNote = `AI review đang bật nhưng thiếu secret ${aiKeyName}.`;
   else if (aiOn && isFork) aiNote = 'Bỏ qua AI review cho PR từ fork (không có secret).';
   else if (aiOn) {
     try {
@@ -303,7 +338,7 @@ export async function main(env = process.env, { fetchImpl = globalThis.fetch } =
         ? (configRef ? showAt(configRef, gpath, repoDir) : readText(path.join(repoDir, gpath)))
         : null;
       ai = await aiReview({
-        fetchImpl, apiKey: env.ANTHROPIC_API_KEY, policy, pr, diff: text,
+        fetchImpl, apiKey: aiKey, policy, pr, diff: text,
         guidelines: gfile ? gfile.slice(0, 30000) : null,
         findings: [...failedJobs.flatMap((j) => j.findings), ...warnings],
       });

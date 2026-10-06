@@ -100,7 +100,7 @@ merge:
   assert.deepEqual(cfg.rules.find((r) => r.id === 'rails/view-no-query').paths, ['api/app/views/**/*.{erb,haml,slim}']);
   assert.equal(cfg.merge.bot_approve.max_lines, 50);
   assert.equal(cfg.merge.bot_approve.enabled, true, 'giữ mặc định của base');
-  assert.equal(cfg.review.model, 'claude-sonnet-5-5');
+  assert.equal(cfg.review.provider, 'openai', 'giữ mặc định của base');
 });
 
 test('resolveConfig: báo lỗi rõ khi regex sai hoặc profile lạ', () => {

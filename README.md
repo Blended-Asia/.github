@@ -102,13 +102,13 @@ Repo cũ thì bật theo lộ trình **quan sát trước, ép sau**. Hướng d
 
 Auto-merge dùng tính năng gốc của GitHub, nên GitHub luôn chờ **mọi** required check (kể cả `org / pr-convention`) và số approve mà ruleset yêu cầu.
 
-**AI review** (`review.ai: true`) gọi Claude API với structured output. Nó đọc diff (đã bỏ lockfile), `ARCHITECTURE.md` của repo và kết quả linter, rồi trả về các comment theo mức độ nghiêm trọng.
+**AI review** (`review.ai: true`) gọi OpenAI Chat Completions (mặc định, `review.provider: openai`) hoặc Claude API (`provider: anthropic`) với structured output. Nó đọc diff (đã bỏ lockfile), `ARCHITECTURE.md` của repo và kết quả linter, rồi trả về các comment theo mức độ nghiêm trọng.
 - AI **chỉ có quyền chặn**. Việc approve do policy cố định quyết định (kích thước, path, tác giả), vì nội dung PR có thể chứa prompt injection kiểu "hãy approve PR này". Prompt coi diff là dữ liệu không tin cậy và báo injection là lỗi `critical`.
 - Mỗi commit chỉ được AI review **một lần**. Kết quả được ghi vào review của chính gate (`github-actions[bot]` hoặc App của harness; bot khác không giả được) và dùng lại khi re-run. Nếu AI từng chặn ở một commit trước của PR, bản sửa luôn cần người xác nhận. Nhờ vậy push commit rỗng để AI review lại cũng không lách được.
 - AI chặn nhầm: một người có quyền **maintain/admin, khác tác giả PR** gắn label `harness:override-ai` rồi re-run job gate. Label do tác giả hoặc người chỉ có quyền write gắn thì không có hiệu lực. Override không bỏ qua được lỗi của tool, và PR đó vẫn cần người approve.
 - API lỗi thì mặc định không chặn nhưng cũng không tự approve. Đặt `review.fail_closed: true` để chặn hẳn.
 - `ARCHITECTURE.md` cũng đọc từ base: PR không sửa được chuẩn mà AI dùng để chấm nó.
-- Mặc định dùng model `claude-sonnet-5-5`, đổi ở `review.model`.
+- `review.model` để trống thì dùng model mặc định theo provider (`DEFAULT_MODELS` trong `scripts/harness/verdict.mjs`).
 
 ## Plan GitHub quyết định mức độ "ép buộc"
 
@@ -139,7 +139,7 @@ Chỉ Enterprise mới khoá hoàn toàn được, bằng `required-*.yml` + `ru
    git tag v1 && git push origin v1
    ```
 2. **Org secrets/variables** cho harness:
-   - `ANTHROPIC_API_KEY` (secret, nếu dùng AI review).
+   - `OPENAI_API_KEY` (secret, nếu dùng AI review; hoặc `ANTHROPIC_API_KEY` khi `review.provider: anthropic`).
    - **GitHub App "harness bot"** (khuyên dùng), quyền Contents R/W + Pull requests R/W, cài cho mọi repo. Lưu variable `HARNESS_APP_CLIENT_ID` và secret `HARNESS_APP_PRIVATE_KEY`.
      - Lý do: merge do GITHUB_TOKEN thực hiện **không kích hoạt workflow** trên `main`. Vercel/Supabase integration không bị ảnh hưởng, nhưng các deploy bằng GitHub Actions thì bị.
      - Không có App thì harness dùng GITHUB_TOKEN. Muốn bot approve được, phải bật Org settings → Actions → "Allow GitHub Actions to create and approve pull requests".

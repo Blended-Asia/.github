@@ -14,7 +14,7 @@ Harness gồm hai phần:
 - **Gate** (`harness.yml` → `scripts/harness/verdict.mjs`): gom kết quả mọi job trong run.
   - Chưa đạt: sticky comment + check `harness / gate` đỏ.
   - Đạt: bot approve nếu rủi ro thấp, rồi bật native auto-merge.
-  - AI review (Claude API) là tuỳ chọn và **chỉ được chặn**.
+  - AI review (OpenAI hoặc Claude, theo `review.provider`) là tuỳ chọn và **chỉ được chặn**.
 
 Ngôn ngữ: message, comment trên PR, README đều viết **tiếng Việt**. Code và tên biến viết tiếng Anh.
 
@@ -56,7 +56,7 @@ Trước khi commit: phải chạy cả test lẫn actionlint. Nếu sửa `stac
 - **Không dùng `${{ }}` trong thân `run:` hay `script:`.** Truyền qua `env:` để tránh script injection. `tests/workflows.test.mjs` sẽ fail nếu vi phạm (và nếu action không ghim SHA).
 - Logic dài nằm trong `scripts/`, không inline trong YAML. Ngoại lệ hiện có: `pr-convention.yml`, `vercel-preview.yml` dùng github-script inline, đánh dấu `// ---- x:begin/end ----` để test trích ra chạy.
 - Finding chuẩn hoá thành `{severity: 'error'|'warn', file (path từ root repo), line, title, message}` rồi in bằng `lib.report()`. Gate đọc lại qua annotation API, nên đừng in lỗi kiểu khác.
-- Test cho logic mới viết bằng `node:test`. GitHub/Anthropic API thì mock `fetch`, có sẵn router trong `tests/verdict.test.mjs` và `tests/org-audit.test.mjs`.
+- Test cho logic mới viết bằng `node:test`. GitHub/OpenAI/Anthropic API thì mock `fetch`, có sẵn router trong `tests/verdict.test.mjs` và `tests/org-audit.test.mjs`.
 
 ## Bất biến bảo mật — KHÔNG được phá (đều đã có test, đều từng là lỗ hổng thật)
 

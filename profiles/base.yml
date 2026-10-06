@@ -9,14 +9,15 @@ convention:
                             # file: file nào PR chạm vào thì phải sạch hoàn toàn (hợp repo mới)
 
 review:
-  ai: false                 # true: bật AI review (cần secret ANTHROPIC_API_KEY ở org/repo)
+  ai: false                 # true: bật AI review (cần secret OPENAI_API_KEY, hoặc ANTHROPIC_API_KEY nếu provider: anthropic)
+  provider: openai          # openai (Chat Completions + Structured Outputs) | anthropic
   diff_exclude:             # bỏ khỏi diff gửi AI (nhiễu, tốn token). Lockfile đã luôn cần người duyệt.
     - "**/package-lock.json"
     - "**/pnpm-lock.yaml"
     - "**/yarn.lock"
     - "**/bun.lock"
     - "**/Gemfile.lock"
-  model: claude-sonnet-5-5
+  model: ""                 # rỗng = mặc định theo provider (DEFAULT_MODELS trong scripts/harness/verdict.mjs)
   language: vi              # ngôn ngữ comment của AI
   block_on: [critical, major]
   guidelines: ARCHITECTURE.md   # tài liệu kiến trúc để AI đối chiếu (nếu có)
