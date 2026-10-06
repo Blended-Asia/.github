@@ -3,6 +3,9 @@
 # enforce: gate đỏ khi chưa đạt, bot approve + auto-merge khi đạt.
 # observe: chấm và comment như thật nhưng KHÔNG chặn, KHÔNG tự approve/merge — dùng khi onboard repo có sẵn.
 enforcement: enforce
+gate:
+  branches: []              # PR vào nhánh nào thì bị gate. [] = default branch. Repo git-flow: [develop]. Hỗ trợ glob (release/*).
+                            # PR vào nhánh khác: harness / gate và org / pr-convention xanh, không comment, không approve/merge.
 convention:
   scope: changed            # changed: chỉ bắt lỗi ở dòng/file thay đổi trong PR · all: toàn bộ repo
   granularity: line         # line: lint/format/tsc chỉ chặn lỗi ở dòng sửa hoặc lỗi mới so với base (hợp repo cũ)

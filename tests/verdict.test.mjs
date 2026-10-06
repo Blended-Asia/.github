@@ -443,3 +443,35 @@ test('path nhạy cảm mặc định khớp cả app Rails/Supabase trong thư 
   const big = await setup({ files: [{ filename: 'jfoodhub/db/schema.rb', additions: 900, deletions: 0 }] }).run();
   assert.equal(big.size, 0, 'schema.rb ở thư mục con không tính vào quy mô hiển thị');
 });
+
+test('gate.branches: PR vào nhánh không được gate → bỏ qua (không comment/approve/merge, không chặn)', async () => {
+  const ev = (baseRef, extra = {}) => ({ pull_request: { number: 7, head: { sha: SHA }, base: { ref: baseRef } }, repository: { default_branch: 'main' }, ...extra });
+  const failing = [{ id: 1, name: 'stack / react (web)', status: 'completed', conclusion: 'failure', html_url: 'u1' }];
+  const skip = setup({ harnessYml: 'gate:\n  branches: [develop]\n', event: ev('main'), jobs: failing });
+  const r = await skip.run();
+  assert.equal(r.skipped, true);
+  assert.equal(r.blocked, false);
+  assert.equal(skip.calls.filter((c) => c.method !== 'GET').length, 0, 'không ghi gì lên PR');
+  const gated = await setup({ harnessYml: 'gate:\n  branches: [develop]\n', event: ev('develop'), jobs: failing }).run();
+  assert.equal(gated.skipped, undefined);
+  assert.equal(gated.blocked, true);
+  const dflt = await setup({ event: ev('feature-x'), jobs: failing }).run();
+  assert.equal(dflt.skipped, true, 'mặc định chỉ gate default branch');
+  const glob = await setup({ harnessYml: 'gate:\n  branches: [develop, "release/*"]\n', event: ev('release/1.2'), jobs: failing }).run();
+  assert.equal(glob.blocked, true);
+  const mq = await setup({ harnessYml: 'gate:\n  branches: [develop]\n', event: { merge_group: { base_ref: 'refs/heads/develop', base_sha: '' }, repository: { default_branch: 'main' } }, jobs: failing }).run();
+  assert.equal(mq.blocked, true, 'merge queue vào develop vẫn gate');
+});
+
+test('gate.branches đọc từ BASE: PR tự thêm nhánh của nó vào danh sách bỏ qua không có tác dụng', async () => {
+  const repo = gitRepo({ '.github/harness.yml': 'gate:\n  branches: [main]\n' });
+  const baseSha = repo.git('rev-parse', 'HEAD');
+  repo.write({ '.github/harness.yml': 'gate:\n  branches: [nothing]\n' });
+  repo.commit('pr né gate');
+  const t = setup({ jobs: [{ id: 1, name: 'stack / react (web)', status: 'completed', conclusion: 'failure', html_url: 'u1' }] });
+  const ev = path.join(mkdtempSync(path.join(tmpdir(), 'ev-')), 'e.json');
+  writeFileSync(ev, JSON.stringify({ pull_request: { number: 7, head: { sha: SHA }, base: { sha: baseSha, ref: 'main' } }, repository: { default_branch: 'main' } }));
+  const r = await t.run({ REPO_DIR: repo.dir, GITHUB_EVENT_PATH: ev });
+  assert.equal(r.skipped, undefined);
+  assert.equal(r.blocked, true);
+});

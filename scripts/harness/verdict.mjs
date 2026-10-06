@@ -93,6 +93,23 @@ export function loadPolicy({ harnessDir = DEFAULT_HARNESS_DIR, repoDir = '.', co
   return deepMerge(base, rest);
 }
 
+/** Nhánh base mà PR/merge queue nhắm tới (null với push/schedule/dispatch). */
+export function gateTarget(event) {
+  const ref = event.pull_request?.base?.ref ?? event.merge_group?.base_ref;
+  return ref ? String(ref).replace(/^refs\/heads\//, '') : null;
+}
+
+export function gatedBranches(policy, defaultBranch) {
+  const list = Array.isArray(policy.gate?.branches) ? policy.gate.branches.map(String).filter(Boolean) : [];
+  return list.length ? list : (defaultBranch ? [defaultBranch] : []);
+}
+
+/** Không biết default branch và không khai báo gate.branches → vẫn gate (an toàn: không lặng lẽ bỏ qua). */
+export function branchGated(policy, branch, defaultBranch) {
+  const list = gatedBranches(policy, defaultBranch);
+  return !list.length || list.some((g) => globToRegExp(g).test(branch));
+}
+
 /** Số dòng mới (phía RIGHT) có thể comment inline, từ patch của GitHub. */
 export function commentableLines(patch) {
   const lines = new Set();
@@ -255,6 +272,14 @@ export async function main(env = process.env, { fetchImpl = globalThis.fetch } =
   const policy = loadPolicy({ harnessDir: env.HARNESS_DIR || DEFAULT_HARNESS_DIR, repoDir, configPath: env.CONFIG_PATH || '.github/harness.yml', configRef });
   const base = `/repos/${owner}/${repo}`;
   const runUrl = `${env.GITHUB_SERVER_URL || 'https://github.com'}/${owner}/${repo}/actions/runs/${env.GITHUB_RUN_ID}`;
+
+  // 0) Chỉ gate PR/merge queue vào nhánh trong gate.branches (đọc từ base; mặc định: default branch).
+  //    Repo git-flow đặt [develop]. Nhánh khác → chỉ ghi summary, không comment/approve/merge, không chặn.
+  const target = gateTarget(event);
+  if (target && !branchGated(policy, target, event.repository?.default_branch)) {
+    summary(`### Harness gate: bỏ qua — base \`${target}\` không nằm trong gate.branches (${gatedBranches(policy, event.repository?.default_branch).join(', ') || 'chưa rõ'}).`);
+    return { blocked: false, wouldBlock: false, observe: policy.enforcement === 'observe', failedJobs: [], skipped: true, botApprove: false, mergeNotes: [] };
+  }
 
   // 1) Kết quả các job trong run (không tin riêng input `results`: hỏi lại API)
   const needs = JSON.parse(env.RESULTS || '{}');

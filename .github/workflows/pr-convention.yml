@@ -66,6 +66,10 @@ on:
         description: Ghi sticky comment tóm tắt lỗi lên PR
         type: boolean
         default: true
+      config_path:
+        description: File cấu hình harness của repo (đọc gate.branches ở commit base)
+        type: string
+        default: .github/harness.yml
 
 jobs:
   check:
@@ -76,10 +80,32 @@ jobs:
       contents: read
       pull-requests: write
     steps:
+      # gate.branches đọc từ harness.yml ở commit BASE (PR không tự đổi được nhánh nào bị gate)
+      - name: Nhánh được gate
+        id: gate
+        if: github.event.pull_request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CONFIG_PATH: ${{ inputs.config_path }}
+        run: |
+          # ---- gate-branches:begin ----
+          raw=$(gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/$CONFIG_PATH?ref=$BASE_SHA" 2>/dev/null || true)
+          # shellcheck disable=SC2016 # $stdin là của Ruby, không phải biến shell
+          branches=$(printf '%s' "$raw" | ruby -ryaml -rjson -e '
+            c = (YAML.safe_load($stdin.read) rescue nil)
+            b = c.is_a?(Hash) && c["gate"].is_a?(Hash) ? c["gate"]["branches"] : nil
+            puts JSON.generate(b.is_a?(Array) ? b.map(&:to_s) : [])')
+          echo "branches=$branches" >> "$GITHUB_OUTPUT"
+          echo "gate.branches (base): $branches"
+          # ---- gate-branches:end ----
+
       - name: Check PR convention
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           INPUTS: ${{ toJSON(inputs) }}
+          GATE_BRANCHES: ${{ steps.gate.outputs.branches }}
         with:
           script: |
             // ---- org-pr-convention:begin ----
@@ -91,6 +117,16 @@ jobs:
             const repo = context.repo.repo;
             // Luôn đọc trạng thái PR hiện tại: re-run một run cũ (payload cũ) không thể "xanh hoá" PR đã bị sửa sai
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: context.payload.pull_request.number });
+            // Chỉ gate PR vào nhánh trong gate.branches (mặc định: default branch). Nhánh khác → bỏ qua, không comment.
+            const gateBranches = JSON.parse(process.env.GATE_BRANCHES || '[]');
+            const defaultBranch = context.payload.repository?.default_branch;
+            const allowed = gateBranches.length ? gateBranches : (defaultBranch ? [defaultBranch] : []);
+            const branchRe = (g) => new RegExp(`^${g.split('**').map((a) => a.split('*').map((b) => b.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')).join('.*')}$`);
+            if (allowed.length && pr.base?.ref && !allowed.some((g) => branchRe(g).test(pr.base.ref))) {
+              core.info(`Base \`${pr.base.ref}\` không nằm trong gate.branches (${allowed.join(', ')}): bỏ qua convention.`);
+              await core.summary.addRaw(`### org / pr-convention: bỏ qua — base \`${pr.base.ref}\` không được gate (${allowed.join(', ')})\n`).write();
+              return;
+            }
             const I = JSON.parse(process.env.INPUTS);
             const MARKER = '<!-- org-pr-convention -->';
             const list = (s) => String(s ?? '').split(/[\n,]/).map((x) => x.trim()).filter(Boolean);

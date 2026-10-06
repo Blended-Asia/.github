@@ -6,6 +6,10 @@
 # Sau 1–2 tuần, khi đã chỉnh hết báo nhầm, đổi thành enforce (xem docs/onboarding-existing-repo.md).
 enforcement: observe
 
+# Nhánh được gate. Bỏ trống = default branch. Repo git-flow (làm việc trên develop):
+# gate:
+#   branches: [develop]
+
 # Stack của repo. Bỏ trống để tự nhận diện:
 #   Gemfile có rails → rails · package.json có react/next → react · package.json khác → node
 # Monorepo: khai báo từng thư mục.

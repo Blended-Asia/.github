@@ -159,3 +159,44 @@ test('re-run một run cũ (payload cũ hợp lệ) vẫn đọc PR hiện tại
   const log = await run({ pr: stale, live });
   assert.match(log.failed, /1 lỗi/);
 });
+
+test('gate.branches: base ngoài danh sách → bỏ qua, không comment; mặc định = default branch', async () => {
+  const bad = { title: 'Update stuff', base: { ref: 'main' } };
+  process.env.GATE_BRANCHES = '["develop"]';
+  try {
+    const skipped = await run({ pr: makePr(bad) });
+    assert.equal(skipped.failed, null);
+    assert.equal(skipped.created.length, 0);
+    assert.deepEqual(skipped.labelsAdded, []);
+    assert.match(skipped.summary, /bỏ qua/);
+    const gated = await run({ pr: makePr({ ...bad, base: { ref: 'develop' } }) });
+    assert.match(gated.failed, /lỗi/);
+    process.env.GATE_BRANCHES = '["release/*"]';
+    assert.match((await run({ pr: makePr({ ...bad, base: { ref: 'release/2.0' } }) })).failed, /lỗi/);
+    assert.equal((await run({ pr: makePr({ ...bad, base: { ref: 'release/2.0/x' } }) })).failed, null, '* không vượt qua /');
+  } finally {
+    delete process.env.GATE_BRANCHES;
+  }
+  const noCfg = await run({ pr: makePr({ ...bad, base: { ref: 'main' } }) });
+  assert.match(noCfg.failed, /lỗi/, 'không có config và không biết default branch → vẫn gate');
+});
+
+test('step "Nhánh được gate": đọc gate.branches từ harness.yml ở base qua gh api; thiếu file/YAML lỗi → []', async () => {
+  const { runBlock, bash } = await import('./helpers.mjs');
+  const { mkdtempSync, writeFileSync, chmodSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const path = (await import('node:path')).default;
+  const s = runBlock(text, 'Nhánh được gate');
+  const withGh = (body) => {
+    const bin = mkdtempSync(path.join(tmpdir(), 'ghshim-'));
+    writeFileSync(path.join(bin, 'gh'), `#!/bin/bash\necho "$@" > "${bin}/args"\n${body}\n`);
+    chmodSync(path.join(bin, 'gh'), 0o755);
+    return { PATH: `${bin}:${process.env.PATH}`, REPO: 'acme/web', BASE_SHA: 'abc123', CONFIG_PATH: '.github/harness.yml' };
+  };
+  const ok = bash(s, { env: withGh("printf 'enforcement: observe\\ngate:\\n  branches: [develop, \"release/*\"]\\n'") });
+  assert.equal(ok.code, 0);
+  assert.equal(ok.outputs.branches, '["develop","release/*"]');
+  assert.equal(bash(s, { env: withGh('echo "Not Found" >&2; exit 1') }).outputs.branches, '[]');
+  assert.equal(bash(s, { env: withGh("printf 'gate: [oops'") }).outputs.branches, '[]');
+  assert.equal(bash(s, { env: withGh("printf 'gate:\\n  branches: develop\\n'") }).outputs.branches, '[]', 'không phải mảng → bỏ');
+});

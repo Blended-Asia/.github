@@ -93,6 +93,7 @@ Repo cũ thì bật theo lộ trình **quan sát trước, ép sau**. Hướng d
 |---|---|---|
 | Có job fail | ❌ | Sticky comment liệt kê job, `file:dòng` và lỗi (lấy từ annotation của run) + link log |
 | Repo ở `enforcement: observe` | 👀 | Comment "nếu bật thì sẽ chặn vì…", check luôn xanh, không approve/merge |
+| PR vào nhánh ngoài `gate.branches` (mặc định chỉ default branch; git-flow đặt `[develop]`) | ⏭️ | `harness / gate` và `org / pr-convention` xanh, chỉ ghi summary, không comment/approve/merge |
 | AI review có vấn đề `critical`/`major` | ❌ | Comment inline đúng dòng + tóm tắt trong sticky comment |
 | Đạt, ≤ `max_lines` (mặc định 200), không đụng `human_required_paths`, đúng `authors` | ✅ | Bot **approve** + bật **auto-merge** |
 | Đạt nhưng đụng migration, `.github/`, auth, Dockerfile, manifest/lockfile, config của linter, hoặc thêm marker tắt kiểm tra | ✅ | Bật auto-merge, ghi "cần người review". Merge ngay khi có người approve |
