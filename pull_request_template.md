@@ -7,5 +7,5 @@
 ## Checklist
 - [ ] Tested locally / on Vercel preview
 - [ ] No secrets or `.env` files committed
-- [ ] Migration mới (nếu có) chạy được với `supabase db reset`, bảng mới đã bật RLS
+- [ ] New migrations (if any) run with `supabase db reset`; new tables have RLS enabled
 - [ ] Updated docs/README if needed
