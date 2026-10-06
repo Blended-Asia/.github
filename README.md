@@ -154,12 +154,24 @@ Chỉ Enterprise mới khoá hoàn toàn được, bằng `required-*.yml` + `ru
    - Chạy `fix=true` để mở PR `ci: adopt org harness (v1)` vào từng repo. PR thêm `org-harness.yml`, `org-pr-convention.yml`, `harness.yml`, PR template, CODEOWNERS.
    - Merge từng PR. Copy file starter (`.rubocop.yml`, `eslint.config.mjs`…) cho repo nào gate báo thiếu.
 6. **Bật ruleset** *sau khi* các repo đã có caller. Bật trước thì PR sẽ kẹt ở "Expected — Waiting for status".
+   Ruleset chia theo nhóm repo (mỗi repo chỉ thuộc **một** nhóm, không bật kèm `org-baseline`):
+
+   | Ruleset | Nhánh được bảo vệ | Approve |
+   |---|---|---|
+   | `org-trunk-team` | default branch | 1 + code owner |
+   | `org-trunk-solo` | default branch | 0 |
+   | `org-gitflow-team` | `develop` | 1 + code owner |
+   | `org-gitflow-solo` | `develop` | 0 |
+
+   Repo git-flow phải đặt `gate.branches: [develop]` trong `harness.yml`. Merge cho phép `squash` + `merge`.
    ```bash
-   ./scripts/apply-ruleset.sh <org> team active
-   SOLO=true ./scripts/apply-ruleset.sh <org> team active          # repo 1 người: không bắt approve
-   ./scripts/apply-ruleset.sh <org> enterprise evaluate            # Enterprise: chạy thử trước
+   REPOS=web,api ./scripts/apply-ruleset.sh <org> trunk-team active
+   REPOS=jfoodhub-workspace ./scripts/apply-ruleset.sh <org> gitflow-team active
+   DRY_RUN=true REPOS=x ./scripts/apply-ruleset.sh <org> gitflow-solo   # chỉ in JSON
+   ./scripts/apply-ruleset.sh <org> team active                        # cũ: org-baseline phủ ~ALL (SOLO=true: không bắt approve)
+   ./scripts/apply-ruleset.sh <org> enterprise evaluate                # Enterprise: chạy thử trước
    ```
-   Sau PR đầu tiên, kiểm tra tên check thực tế trên PR có đúng `org / pr-convention` và `harness / gate` không, khác thì sửa `context` trong `rulesets/org-baseline.json`. `integration_id: 15368` là GitHub Actions, dùng để chặn ai đó giả status bằng API.
+   `REPOS` ghi đè danh sách repo của ruleset (lần sau phải truyền đủ cả danh sách). Sau PR đầu tiên, kiểm tra tên check thực tế trên PR có đúng `org / pr-convention` và `harness / gate` không, khác thì sửa `context` trong `rulesets/*.json`. `integration_id: 15368` là GitHub Actions, dùng để chặn ai đó giả status bằng API.
 7. **Vercel preview** có Deployment Protection: tạo *Protection Bypass for Automation*, lưu thành org secret `VERCEL_AUTOMATION_BYPASS_SECRET`.
 
 Bỏ qua finding đã chấp nhận rủi ro: `.trivyignore`, `// nosemgrep`, `.hadolint.yaml`, `config/brakeman.ignore`, `harness-disable-line`. Repo có migration nên bật thêm "Require branches to be up to date" để check thứ tự timestamp luôn so với base mới nhất.

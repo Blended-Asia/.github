@@ -33,7 +33,7 @@ scripts/harness/      lib (glob, git, YAML qua ruby, annotation) · config (reso
                       · stack (chạy tool, so baseline) · verdict (gate) · debt (đo nợ repo cũ trước khi onboard)
 docs/onboarding-existing-repo.md   quy trình đưa repo CÓ SẴN vào harness (observe → enforce)
 scripts/org-audit.mjs quét org, drift caller, CODEOWNERS, ruleset; FIX=true mở PR
-rulesets/             org-baseline.json (Team) · org-baseline-enterprise.json
+rulesets/             org-{trunk,gitflow}-{team,solo}.json (theo nhóm repo) · org-baseline.json (Team, ~ALL) · org-baseline-enterprise.json
 tests/                node:test, chạy offline; integration.test.mjs chạy tool thật khi HARNESS_INTEGRATION=1
 ```
 
@@ -44,7 +44,7 @@ node --test 'tests/*.test.mjs'                                  # 97 test, ~10s.
 HARNESS_INTEGRATION=1 node --test tests/integration.test.mjs    # ~2 phút: npm install Next/ESLint/TS, bundle RuboCop, gem Brakeman
 actionlint .github/workflows/*.yml workflow-templates/*.yml     # phải sạch, kể cả shellcheck
 ./scripts/init.sh <org>                                         # thay YOUR_ORG trong toàn repo
-./scripts/apply-ruleset.sh <org> team|enterprise [active|evaluate|disabled]   # SOLO=true: không bắt approve
+REPOS=a,b ./scripts/apply-ruleset.sh <org> trunk-team|trunk-solo|gitflow-team|gitflow-solo|team|enterprise [active|evaluate|disabled]   # DRY_RUN=true: chỉ in JSON
 ```
 
 Trước khi commit: phải chạy cả test lẫn actionlint. Nếu sửa `stack.mjs`, `profiles/*` hoặc `eslint.config.mjs` của starter thì chạy thêm integration test.
