@@ -44,6 +44,7 @@ node --test 'tests/*.test.mjs'                                  # 97 test, ~10s.
 HARNESS_INTEGRATION=1 node --test tests/integration.test.mjs    # ~2 phút: npm install Next/ESLint/TS, bundle RuboCop, gem Brakeman
 actionlint .github/workflows/*.yml workflow-templates/*.yml     # phải sạch, kể cả shellcheck
 ./scripts/init.sh <org>                                         # thay YOUR_ORG trong toàn repo
+./scripts/e2e-sandbox.sh <org>/harness-sandbox [e1 e2 …]       # kiểm chứng trên sandbox thật (gh + git), in bảng link PR
 REPOS=a,b ./scripts/apply-ruleset.sh <org> trunk-team|trunk-solo|gitflow-team|gitflow-solo|team|enterprise [active|evaluate|disabled]   # DRY_RUN=true: chỉ in JSON
 ```
 
