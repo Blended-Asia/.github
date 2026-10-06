@@ -37,12 +37,15 @@ merge:
   human_required_paths:
     # dữ liệu, hạ tầng, bảo mật
     - "**/migrations/**"
-    - "db/migrate/**"
-    - "db/schema.rb"
-    - "supabase/**"
+    - "**/db/migrate/**"        # **/ khớp cả root lẫn thư mục con (vd jfoodhub/db/migrate)
+    - "**/db/schema.rb"
+    - "**/db/structure.sql"
+    - "**/supabase/**"
     - "**/auth/**"
-    - "config/credentials/**"
-    - "config/initializers/**"
+    - "**/config/credentials/**"
+    - "**/config/credentials.yml.enc"
+    - "**/config/master.key"
+    - "**/config/initializers/**"
     - "Dockerfile"
     - "**/Dockerfile*"
     # dependency (manifest + lockfile: tránh đổi resolved/integrity lén lút)
@@ -98,4 +101,5 @@ merge:
     - "**/*.snap"
     - "**/generated/**"
     - "**/database.types.ts"
-    - "db/schema.rb"
+    - "**/db/schema.rb"
+    - "**/db/structure.sql"

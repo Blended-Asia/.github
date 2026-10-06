@@ -1,4 +1,4 @@
-import { test, beforeEach } from 'node:test';
+import { test, beforeEach, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,6 +20,12 @@ const REQUIRED = { type: 'required_status_checks', parameters: { required_status
 
 let calls;
 let routes;
+
+// Log của org-audit (có ký tự nhiều byte) thỉnh thoảng làm runner của node:test lỗi
+// "Unable to deserialize cloned data" khi chạy song song nhiều file → nuốt log trong file test này.
+const realLog = console.log;
+before(() => { console.log = () => {}; });
+after(() => { console.log = realLog; });
 
 beforeEach(() => {
   calls = [];

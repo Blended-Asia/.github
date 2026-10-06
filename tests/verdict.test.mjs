@@ -428,3 +428,18 @@ test('observe: re-run run cũ cũng không làm đỏ', async () => {
   const r = await t.run();
   assert.deepEqual([r.stale, r.blocked, r.wouldBlock], [true, false, true]);
 });
+
+test('path nhạy cảm mặc định khớp cả app Rails/Supabase trong thư mục con (monorepo)', async () => {
+  const paths = [
+    'jfoodhub/db/migrate/20260101000000_add_x.rb', 'jfoodhub/db/schema.rb', 'db/migrate/1_a.rb', 'db/schema.rb',
+    'api/db/structure.sql', 'jfoodhub/config/credentials/staging.yml.enc', 'jfoodhub/config/credentials.yml.enc',
+    'jfoodhub/config/initializers/cors.rb', 'apps/web/supabase/migrations/1.sql',
+  ];
+  for (const filename of paths) {
+    const r = await setup({ files: [{ filename, additions: 1, deletions: 0, patch: '@@ -0,0 +1 @@\n+x\n' }] }).run();
+    assert.equal(r.botApprove, false, filename);
+    assert.deepEqual(r.sensitive, [filename]);
+  }
+  const big = await setup({ files: [{ filename: 'jfoodhub/db/schema.rb', additions: 900, deletions: 0 }] }).run();
+  assert.equal(big.size, 0, 'schema.rb ở thư mục con không tính vào quy mô hiển thị');
+});
