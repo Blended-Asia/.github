@@ -89,6 +89,7 @@ beforeEach(() => {
       required_status_checks: { checks: [{ context: 'harness / gate' }], contexts: ['org / pr-convention'] },
     })],
     ['GET', /\/branches\/main$/, () => ({ protected: false })],
+    ['GET', /\/branches\/develop$/, () => [404, null]],
     ['GET', /\/repos\/acme\/compliant\/vulnerability-alerts/, () => [204, null]],
     ['GET', /\/vulnerability-alerts/, () => [404, null]],
     // FIX mode
@@ -247,4 +248,53 @@ test('QUIET: không in tên repo ra log, không ghi step summary', async () => {
   } finally {
     [console.log, console.error] = orig;
   }
+});
+
+test('git-flow: audit + adoption PR trên develop; starter harness.yml có gate.branches [develop]', async () => {
+  const devFiles = { '.github/workflows/org-harness.yml': tpl('org-harness.yml').replace('[main]', '[develop]') };
+  routes.unshift(
+    ['GET', /^\/orgs\/acme\/repos/, () => [repo('flow')]],
+    ['GET', /\/repos\/acme\/flow\/branches\/develop$/, () => ({ name: 'develop', protected: false })],
+    ['GET', /\/repos\/acme\/flow\/git\/trees\/main\?/, () => tree(['README.md'])],
+    ['GET', /\/repos\/acme\/flow\/git\/trees\/develop\?/, () => tree(['.github/workflows/org-harness.yml', 'Gemfile', 'config/application.rb'])],
+    ['GET', /\/repos\/acme\/flow\/contents\/([^?]+)\?ref=develop$/, (m) => {
+      const c = devFiles[decodeURIComponent(m[1])];
+      return c ? { content: b64(c), sha: 'blob1' } : [404, null];
+    }],
+    ['GET', /\/repos\/acme\/flow\/contents\/[^?]+\?ref=main$/, () => [404, null]],
+    ['GET', /\/repos\/acme\/flow\/rules\/branches\/develop$/, () => []],
+    ['GET', /\/repos\/acme\/flow\/git\/ref\/heads\/develop$/, () => ({ object: { sha: 'dev123' } })],
+  );
+  const { results } = await main(env({ FIX: 'true' }));
+  const r = byName(results).flow;
+  assert.equal(r.branch, 'develop');
+  assert.ok(r.stacks.includes('rails'), 'đọc cây file của develop');
+  assert.equal(r.checks.harness, 'pass', 'org-harness trên develop đúng template');
+  assert.equal(r.checks.convention, 'fail');
+  assert.ok(!has(r, 'high', /khác template/), 'caller trên develop với push: [develop] không bị coi là bị sửa');
+  assert.ok(has(r, 'info', /Audit trên nhánh `develop`/));
+  assert.ok(calls.some((c) => c.method === 'GET' && /rules\/branches\/develop$/.test(c.path)), 'kiểm tra bảo vệ nhánh develop');
+  const pr = calls.find((c) => c.method === 'POST' && /\/pulls$/.test(c.path));
+  assert.equal(pr.body.base, 'develop');
+  assert.equal(calls.find((c) => c.method === 'POST' && /git\/refs$/.test(c.path)).body.sha, 'dev123');
+  const put = (p) => calls.find((c) => c.method === 'PUT' && c.path.includes(encodeURIComponent(p).replace(/%2F/g, '/')) || (c.method === 'PUT' && c.path.endsWith(p)));
+  const harnessYml = Buffer.from(put('.github/harness.yml').body.content, 'base64').toString();
+  assert.match(harnessYml, /^gate:\n  branches: \["develop"\]$/m);
+  const conv = Buffer.from(put('.github/workflows/org-pr-convention.yml').body.content, 'base64').toString();
+  assert.match(conv, /acme\/\.github/);
+});
+
+test('git-flow: gate.branches trong harness.yml quyết định nhánh làm việc (ưu tiên hơn đoán theo develop)', async () => {
+  routes.unshift(
+    ['GET', /^\/orgs\/acme\/repos/, () => [repo('rel')]],
+    ['GET', /\/repos\/acme\/rel\/branches\/develop$/, () => [404, null]],
+    ['GET', /\/repos\/acme\/rel\/git\/trees\/main\?/, () => tree(['.github/harness.yml'])],
+    ['GET', /\/repos\/acme\/rel\/git\/trees\/next\?/, () => tree(['.github/harness.yml'])],
+    ['GET', /\/repos\/acme\/rel\/contents\/\.github\/harness\.yml\?ref=(main|next)$/, () => ({ content: b64('gate:\n  branches: ["release/*", next]\n'), sha: 'b' })],
+    ['GET', /\/repos\/acme\/rel\/contents\/[^?]+\?ref=next$/, () => [404, null]],
+    ['GET', /\/repos\/acme\/rel\/rules\/branches\/next$/, () => []],
+    ['GET', /\/repos\/acme\/rel\/branches\/next$/, () => ({ protected: false })],
+  );
+  const { results } = await main(env());
+  assert.equal(byName(results).rel.branch, 'next');
 });

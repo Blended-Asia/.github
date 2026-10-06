@@ -172,6 +172,37 @@ export function codeownersFor(text, file) {
   return owners ?? [];
 }
 
+// ---------- Nhánh làm việc ----------
+async function readHarnessConfig(gh, base, ref) {
+  const hc = await gh.get(`${base}/contents/.github/harness.yml?ref=${encodeURIComponent(ref)}`, [404]);
+  if (!hc.data?.content) return { exists: false };
+  try {
+    const tmp = path.join(await mkdtemp(path.join(tmpdir(), 'harness-')), 'h.yml');
+    await writeFile(tmp, unb64(hc.data.content));
+    return { exists: true, cfg: loadYaml(tmp) };
+  } catch (e) {
+    return { exists: true, error: e };
+  }
+}
+
+/**
+ * Nhánh mà PR được gate và adoption PR nhắm vào:
+ * gate.branches (nhánh cụ thể đầu tiên, đọc ở develop rồi default) → có branch develop (git-flow) → default branch.
+ */
+export async function workBranch(gh, cfg, repo) {
+  const base = `/repos/${cfg.org}/${repo.name}`;
+  const dev = repo.default_branch === 'develop' ? null : await gh.get(`${base}/branches/develop`, [404]);
+  const candidates = dev?.data ? ['develop', repo.default_branch] : [repo.default_branch];
+  for (const ref of candidates) {
+    const { cfg: hcfg } = await readHarnessConfig(gh, base, ref);
+    const list = Array.isArray(hcfg?.gate?.branches) ? hcfg.gate.branches.map(String) : [];
+    const literal = list.find((b) => b && !/[*?[{]/.test(b));
+    if (literal) return { branch: literal, source: `gate.branches trong harness.yml (${ref})` };
+  }
+  if (dev?.data) return { branch: 'develop', source: 'có branch develop (git-flow)' };
+  return { branch: repo.default_branch, source: 'default branch' };
+}
+
 // ---------- Phân tích 1 repo ----------
 export async function auditRepo(gh, cfg, repo) {
   const r = {
@@ -179,6 +210,7 @@ export async function auditRepo(gh, cfg, repo) {
     url: repo.html_url,
     visibility: repo.visibility ?? (repo.private ? 'private' : 'public'),
     branch: repo.default_branch,
+    defaultBranch: repo.default_branch,
     stacks: [],
     checks: {},
     findings: [],
@@ -188,7 +220,18 @@ export async function auditRepo(gh, cfg, repo) {
   const add = (level, msg) => r.findings.push({ level, msg });
   const base = `/repos/${cfg.org}/${repo.name}`;
 
-  const tree = await gh.get(`${base}/git/trees/${encodeURIComponent(repo.default_branch)}?recursive=1`, [404, 409]);
+  const tree0 = await gh.get(`${base}/git/trees/${encodeURIComponent(repo.default_branch)}?recursive=1`, [404, 409]);
+  if (!tree0.data) {
+    add('info', 'Repo rỗng');
+    r.empty = true;
+    return r;
+  }
+  // Repo git-flow: audit trên nhánh làm việc (develop), không phải default branch
+  const wb = await workBranch(gh, cfg, repo);
+  r.branch = wb.branch;
+  if (r.branch !== repo.default_branch) add('info', `Audit trên nhánh \`${r.branch}\` (${wb.source}), default branch là \`${repo.default_branch}\``);
+  const ref = encodeURIComponent(r.branch);
+  const tree = r.branch === repo.default_branch ? tree0 : await gh.get(`${base}/git/trees/${ref}?recursive=1`, [404, 409]);
   if (!tree.data) {
     add('info', 'Repo rỗng');
     r.empty = true;
@@ -211,12 +254,11 @@ export async function auditRepo(gh, cfg, repo) {
   if (has(/(^|\/)config\/application\.rb$/)) r.stacks.push('rails');
   r.hasHarnessConfig = files.includes('.github/harness.yml');
   if (r.hasHarnessConfig) {
-    const hc = await gh.get(`${base}/contents/.github/harness.yml?ref=${encodeURIComponent(repo.default_branch)}`, [404]);
-    if (hc.data?.content) {
+    const hc = await readHarnessConfig(gh, base, r.branch);
+    if (hc.exists) {
       try {
-        const tmp = path.join(await mkdtemp(path.join(tmpdir(), 'harness-')), 'h.yml');
-        await writeFile(tmp, unb64(hc.data.content));
-        const hcfg = loadYaml(tmp);
+        if (hc.error) throw hc.error;
+        const hcfg = hc.cfg;
         const weak = harnessWeakening(hcfg);
         if (weak.length) add('warn', `\`harness.yml\` nới lỏng: ${weak.join('; ')}`);
         if (hcfg?.enforcement === 'observe') {
@@ -239,7 +281,7 @@ export async function auditRepo(gh, cfg, repo) {
   const usesRe = new RegExp(`${escRe(cfg.org)}/\\.github/\\.github/workflows/(security|infra|stack|harness|pr-convention|vercel-preview)\\.yml@([\\w./-]+)`, 'gi');
   const found = {};
   for (const p of wfPaths) {
-    const c = await gh.get(`${base}/contents/${enc(p)}?ref=${encodeURIComponent(repo.default_branch)}`, [404]);
+    const c = await gh.get(`${base}/contents/${enc(p)}?ref=${ref}`, [404]);
     if (!c.data?.content) continue;
     const text = unb64(c.data.content);
     for (const m of text.matchAll(usesRe)) {
@@ -262,8 +304,8 @@ export async function auditRepo(gh, cfg, repo) {
   for (const [p, text] of Object.entries(r.workflowFiles)) {
     const tpl = CALLERS[path.basename(p)];
     if (tpl) {
-      const expected = normalizeCaller(await readFile(path.join(ROOT, tpl), 'utf8'), repo.default_branch);
-      if (normalizeCaller(text, repo.default_branch) !== expected) {
+      const expected = normalizeCaller(await readFile(path.join(ROOT, tpl), 'utf8'), r.branch);
+      if (normalizeCaller(text, r.branch) !== expected) {
         add('high', `\`${p}\` khác template ngoài phần \`with:\`, cần review (có thể đã bị sửa để né check)`);
         if (p.endsWith('org-harness.yml')) r.checks.harness = 'warn';
         if (p.endsWith('org-pr-convention.yml')) r.checks.convention = 'warn';
@@ -276,7 +318,7 @@ export async function auditRepo(gh, cfg, repo) {
   }
 
   // Branch protection / ruleset
-  const br = encodeURIComponent(repo.default_branch);
+  const br = ref;
   const rules = await gh.get(`${base}/rules/branches/${br}`, [403, 404]);
   const types = new Set((rules.data ?? []).map((x) => x.type));
   const contexts = (rules.data ?? [])
@@ -307,7 +349,7 @@ export async function auditRepo(gh, cfg, repo) {
       : types.has('pull_request') || types.has('protected') ? 'warn' : 'fail';
     if (r.checks.protection === 'warn') add('warn', 'Có bảo vệ branch nhưng chưa bắt buộc PR + check harness / gate + org / pr-convention');
   }
-  if (r.checks.protection === 'fail') add(r.visibility === 'public' ? 'high' : 'warn', 'Default branch không được bảo vệ (push thẳng được)');
+  if (r.checks.protection === 'fail') add(r.visibility === 'public' ? 'high' : 'warn', `Nhánh \`${r.branch}\` không được bảo vệ (push thẳng được)`);
 
   // Ownership + cập nhật dependency
   const coPath = ['.github/CODEOWNERS', 'CODEOWNERS', 'docs/CODEOWNERS'].find((p) => files.includes(p));
@@ -342,11 +384,11 @@ export async function auditRepo(gh, cfg, repo) {
 }
 
 // ---------- Mở PR sửa ----------
-async function template(cfg, file, repo) {
+async function template(cfg, file, branch) {
   const t = await readFile(path.join(ROOT, file), 'utf8');
   return t
     .replace(/[\w.-]+(?=\/\.github\/\.github\/workflows\/)/g, cfg.org)
-    .replaceAll('$default-branch', repo.default_branch)
+    .replaceAll('$default-branch', branch)
     .replace(/(\/\.github\/workflows\/[\w-]+\.yml)@v1\b/g, `$1@${cfg.ref}`);
 }
 
@@ -362,16 +404,21 @@ export async function planFixes(cfg, r, repo) {
     if (next !== text) out.push({ path: p, content: next, message: `ci: bump org workflows to ${cfg.ref}` });
   }
   if (!r.found.security || !r.found.infra || !r.found.stack || !r.found.harness) {
-    out.push({ path: '.github/workflows/org-harness.yml', content: await template(cfg, 'workflow-templates/org-harness.yml', repo), message: 'ci: add org harness workflow' });
+    out.push({ path: '.github/workflows/org-harness.yml', content: await template(cfg, 'workflow-templates/org-harness.yml', r.branch), message: 'ci: add org harness workflow' });
   }
   if (!r.found['pr-convention']) {
-    out.push({ path: '.github/workflows/org-pr-convention.yml', content: await template(cfg, 'workflow-templates/org-pr-convention.yml', repo), message: 'ci: add org PR convention check' });
+    out.push({ path: '.github/workflows/org-pr-convention.yml', content: await template(cfg, 'workflow-templates/org-pr-convention.yml', r.branch), message: 'ci: add org PR convention check' });
   }
   if (r.missingPreview) {
-    out.push({ path: '.github/workflows/org-vercel-preview.yml', content: await template(cfg, 'workflow-templates/org-vercel-preview.yml', repo), message: 'ci: add Vercel preview check' });
+    out.push({ path: '.github/workflows/org-vercel-preview.yml', content: await template(cfg, 'workflow-templates/org-vercel-preview.yml', r.branch), message: 'ci: add Vercel preview check' });
   }
   if (!r.hasHarnessConfig) {
-    out.push({ path: '.github/harness.yml', content: await readFile(path.join(ROOT, 'profiles/starter/harness.yml'), 'utf8'), message: 'ci: add harness config' });
+    let starter = await readFile(path.join(ROOT, 'profiles/starter/harness.yml'), 'utf8');
+    // Nhánh làm việc khác default branch (git-flow) → gate đúng nhánh đó, nếu không mọi PR vào develop bị bỏ qua
+    if (r.branch !== (r.defaultBranch ?? repo.default_branch)) {
+      starter = starter.replace(/# gate:\n#   branches: \[develop\]\n/, `gate:\n  branches: [${JSON.stringify(r.branch)}]\n`);
+    }
+    out.push({ path: '.github/harness.yml', content: starter, message: 'ci: add harness config' });
   }
   if (!r.hasPrTemplate) {
     out.push({ path: '.github/pull_request_template.md', content: await readFile(path.join(ROOT, 'pull_request_template.md'), 'utf8'), message: 'docs: add PR template' });
@@ -383,14 +430,14 @@ export async function planFixes(cfg, r, repo) {
   return [...new Map(out.map((f) => [f.path, f])).values()];
 }
 
-export async function openFixPr(gh, cfg, repo, files) {
+export async function openFixPr(gh, cfg, repo, files, target = repo.default_branch) {
   const base = `/repos/${cfg.org}/${repo.name}`;
   const branch = `ci/org-harness-${cfg.ref.replace(/[^\w.-]/g, '-')}`;
-  const head = await gh.get(`${base}/git/ref/heads/${encodeURIComponent(repo.default_branch)}`);
+  const head = await gh.get(`${base}/git/ref/heads/${encodeURIComponent(target)}`);
   const open = await gh.get(`${base}/pulls?state=open&head=${encodeURIComponent(`${cfg.org}:${branch}`)}`);
   const created = await gh.req('POST', `${base}/git/refs`, { ref: `refs/heads/${branch}`, sha: head.data.object.sha }, [422]);
   if (created.status === 422 && !open.data.length) {
-    // Branch cũ còn sót (PR trước đã merge/đóng) → đưa về default branch để không kéo commit cũ vào
+    // Branch cũ còn sót (PR trước đã merge/đóng) → đưa về nhánh đích để không kéo commit cũ vào
     await gh.req('PATCH', `${base}/git/refs/heads/${branch}`, { sha: head.data.object.sha, force: true });
   }
   for (const f of files) {
@@ -417,7 +464,7 @@ export async function openFixPr(gh, cfg, repo, files) {
     'Các check `org / pr-convention` và `harness / gate` sẽ chạy ngay trên PR này (với cấu hình mặc định, vì `harness.yml` chỉ có hiệu lực sau khi merge). Nếu ruleset chưa áp cho repo này thì gate đỏ vì nợ cũ cũng không chặn merge PR này.',
   ].join('\n');
   const pr = await gh.req('POST', `${base}/pulls`, {
-    title: `ci: adopt org harness (${cfg.ref})`, head: branch, base: repo.default_branch, body,
+    title: `ci: adopt org harness (${cfg.ref})`, head: branch, base: target, body,
   });
   return pr.data.html_url;
 }
@@ -480,7 +527,7 @@ export async function main(env = process.env) {
       const r = await auditRepo(gh, cfg, repo);
       if (!r.empty) {
         r.fixes = await planFixes(cfg, r, repo);
-        if (cfg.fix && r.fixes.length) r.prUrl = await openFixPr(gh, cfg, repo, r.fixes);
+        if (cfg.fix && r.fixes.length) r.prUrl = await openFixPr(gh, cfg, repo, r.fixes, r.branch);
       }
       results.push(r);
       if (!cfg.quiet) console.log(`- ${repo.name}: ${JSON.stringify(r.checks)}${r.prUrl ? ` → ${r.prUrl}` : ''}`);
