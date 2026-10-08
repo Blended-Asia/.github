@@ -68,6 +68,19 @@ To intentionally skip a line, add a `harness-disable-line <rule-id>` comment to 
 
 **`.github/harness.yml` is always read from the PR's base commit.** So a PR cannot disable rules or raise the approval threshold for itself. Config changes only take effect after merge, and the file is under `.github/**`, so it always needs a human review.
 
+## Local secret hook
+
+Catch secrets before they leave a developer's machine. Copy `profiles/starter/hooks/lefthook.yml` and `.gitleaks.toml` to the repo root, then on each machine:
+
+```bash
+brew install lefthook gitleaks   # once per machine
+lefthook install                 # once per clone
+```
+
+- `pre-commit` scans staged changes, `pre-push` scans the commits being pushed (gitleaks default rules + org rules for Supabase, Rails keys).
+- Sample env files (`.env.example`, `.env.staging.example`…) are allowed, matching the CI allowlist.
+- The hook can be skipped with `--no-verify`, so it is a convenience, not enforcement. Enforcement stays in CI: TruffleHog on every PR and a weekly full-history scan. CI never reads the repo's `.gitleaks.toml`, so loosening it does not weaken PR checks.
+
 ## Existing projects
 
 Existing repos are rolled out **observe first, enforce later**. Detailed instructions for humans and for Claude Code are in [`docs/onboarding-existing-repo.md`](docs/onboarding-existing-repo.md).

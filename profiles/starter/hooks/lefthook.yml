@@ -1,0 +1,17 @@
+# Local secret check before code leaves the machine (copy to the repo root, then run `lefthook install`).
+# Install once per machine: `brew install lefthook gitleaks` (or see https://github.com/gitleaks/gitleaks#installing).
+# This is a fast first line of defence only: it can be skipped with --no-verify. The org harness still
+# scans every PR (TruffleHog) and the full history weekly, independent of this file.
+pre-commit:
+  commands:
+    gitleaks:
+      run: gitleaks git --pre-commit --staged --redact --no-banner --config .gitleaks.toml
+
+pre-push:
+  commands:
+    gitleaks:
+      # Scan only the commits being pushed (upstream..HEAD); new branches fall back to the remote default branch.
+      run: |
+        if upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then range="$upstream..HEAD";
+        else range="$(git symbolic-ref -q --short refs/remotes/origin/HEAD || echo origin/main)..HEAD"; fi
+        gitleaks git --redact --no-banner --config .gitleaks.toml --log-opts="$range"

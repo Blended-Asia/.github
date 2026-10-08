@@ -1,0 +1,35 @@
+# Gitleaks config for the local pre-commit / pre-push hook (lefthook.yml).
+# Keeps gitleaks' built-in rules and adds secrets specific to Blended-Asia stacks.
+# CI does not read this file: the org harness uses its own scanner, so loosening it here does not weaken PR checks.
+title = "Blended-Asia gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "supabase-secret-key"
+description = "Supabase secret API key"
+regex = '''sb_secret_[A-Za-z0-9_-]{20,}'''
+keywords = ["sb_secret_"]
+
+[[rules]]
+id = "supabase-service-role-jwt"
+description = "Supabase service_role JWT assigned to a variable"
+regex = '''(?i)service_role[A-Za-z0-9_]*["']?\s*[:=]\s*["']?eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}'''
+keywords = ["service_role"]
+
+[[rules]]
+id = "rails-secret-key-base"
+description = "Rails secret_key_base"
+regex = '''(?i)secret_key_base["']?\s*[:=]\s*["']?[0-9a-f]{64,}'''
+keywords = ["secret_key_base"]
+
+[[rules]]
+id = "rails-master-key"
+description = "Rails master key (RAILS_MASTER_KEY)"
+regex = '''(?i)rails_master_key["']?\s*[:=]\s*["']?[0-9a-f]{32}\b'''
+keywords = ["rails_master_key"]
+
+[allowlist]
+description = "Sample env files hold placeholders only"
+paths = ['''(^|/)\.env(\.[^/.]+)*\.(example|sample|template|defaults)$''']

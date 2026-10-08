@@ -84,6 +84,7 @@ One PR `ci: adopt org harness (observe)` containing:
 - `.github/harness.yml`, `ARCHITECTURE.md`
 - missing linter config (`.rubocop.yml`, `eslint.config.mjs`…) **only if** the team agrees. Adding linter config to an existing repo forces every touched file to be restyled.
 - `.github/CODEOWNERS` covering `/.github/`
+- `lefthook.yml` + `.gitleaks.toml` from `profiles/starter/hooks/` (local secret check; see "Local secret hook" in the README). Each developer runs `lefthook install` once.
 
 Note: this PR itself runs the harness with the **default** config (enforce), because `harness.yml` is read from base, and base does not have the file yet.
 - Thanks to "block only new errors", the gate is usually green: the PR only adds config files. If it adds new linter config, old lint errors do not count as new errors either.
