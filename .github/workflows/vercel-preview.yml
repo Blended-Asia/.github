@@ -27,7 +27,7 @@ permissions:
 jobs:
   headers:
     name: preview-headers
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - name: Check security headers + sensitive paths

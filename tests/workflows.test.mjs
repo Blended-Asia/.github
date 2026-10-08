@@ -59,3 +59,17 @@ test('stack.yml: picks the Ruby version (app → root .ruby-version/.tool-versio
   assert.equal(v({ 'api/Gemfile': 'x', '.ruby-version': '3.2$(id)\n' }), '3.4');
   assert.equal(v({ 'Gemfile': 'gem "rails"\n' }, '.'), '3.4');
 });
+
+test('runner: reusable jobs honour vars.HARNESS_RUNS_ON; this public repo\'s own jobs stay on GitHub-hosted runners', () => {
+  const EXPR = "${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}";
+  const OWN = ['.github/workflows/self-test.yml', '.github/workflows/org-audit.yml'];
+  for (const f of files.filter((x) => x.startsWith('.github/workflows/'))) {
+    const wf = loadYaml(path.join(ROOT, f));
+    for (const [id, job] of Object.entries(wf.jobs ?? {})) {
+      if (!job['runs-on']) continue; // job that calls another workflow
+      // Self-hosted runners must never run code from the public repo (anyone could fork/PR it)
+      if (OWN.includes(f)) assert.equal(job['runs-on'], 'ubuntu-latest', `${f} › ${id}`);
+      else assert.equal(job['runs-on'], EXPR, `${f} › ${id}`);
+    }
+  }
+});

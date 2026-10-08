@@ -190,6 +190,20 @@ Only Enterprise can lock this down completely, using `required-*.yml` + `ruleset
 
 Skipping findings whose risk has been accepted: `.trivyignore`, `// nosemgrep`, `.hadolint.yaml`, `config/brakeman.ignore`, `harness-disable-line`. Repos with migrations should also enable "Require branches to be up to date" so the timestamp-order check always compares against the latest base.
 
+## Runners and Actions minutes
+
+Every reusable job runs on `${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}`. To move a repo (or the whole org) to other runners, set the variable; no caller changes are needed:
+
+```bash
+gh variable set HARNESS_RUNS_ON -R <org>/<repo> --body my-runner-label     # one repo
+gh variable set HARNESS_RUNS_ON --org <org> --visibility private --body my-runner-label
+```
+
+- Public repos run free on GitHub-hosted runners; private repos use the plan's included minutes (Team: 3,000/month), then the Actions budget.
+- org-audit reports job minutes per repo for the last 7 days (needs the App's Actions: Read permission).
+- Consider other runners when overage is regularly above ~$20/month or 3+ private repos are active: a cheaper hosted-runner service, or self-hosted runners.
+- Self-hosted rules: private repos only (never this public repo; `self-test.yml` and `org-audit.yml` stay on `ubuntu-latest`), a fresh container/VM per job, no secrets on the host, separate from staging/production machines. Check GitHub's current pricing for self-hosted runners first.
+
 ## Releasing changes
 
 PR into this repo → `self-test` (actionlint + offline tests) → merge → move the tag:

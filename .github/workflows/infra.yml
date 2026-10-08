@@ -87,7 +87,7 @@ env:
 jobs:
   detect:
     name: detect
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 5
     outputs:
       docker: ${{ steps.d.outputs.docker }}
@@ -122,7 +122,7 @@ jobs:
     name: docker
     needs: detect
     if: needs.detect.outputs.docker == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -338,7 +338,7 @@ jobs:
     name: vercel
     needs: detect
     if: needs.detect.outputs.vercel == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -386,7 +386,7 @@ jobs:
     name: supabase (${{ matrix.dir }})
     needs: detect
     if: needs.detect.outputs.supabase == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false

@@ -28,7 +28,7 @@ env:
 jobs:
   plan:
     name: plan
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 5
     outputs:
       rails: ${{ steps.plan.outputs.rails }}
@@ -59,7 +59,7 @@ jobs:
   architecture:
     name: architecture
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -88,7 +88,7 @@ jobs:
     name: rails (${{ matrix.path }})
     needs: plan
     if: needs.plan.outputs.rails != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -153,7 +153,7 @@ jobs:
     name: ${{ matrix.name }} (${{ matrix.path }})
     needs: plan
     if: needs.plan.outputs.js != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 25
     strategy:
       fail-fast: false

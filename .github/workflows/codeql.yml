@@ -13,7 +13,7 @@ on:
 jobs:
   analyze:
     name: codeql (${{ matrix.language }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 30
     permissions:
       contents: read

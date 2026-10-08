@@ -74,7 +74,7 @@ on:
 jobs:
   check:
     name: pr-convention
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 5
     permissions:
       contents: read

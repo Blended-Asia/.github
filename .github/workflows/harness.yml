@@ -31,7 +31,7 @@ jobs:
     # Only PR/merge queue runs carry the exact required check name "harness / gate".
     # Runs from push/schedule/"Run workflow" become "harness / gate (push)"… so they cannot turn a PR's check green.
     name: ${{ contains(fromJSON('["pull_request","merge_group"]'), github.event_name) && 'gate' || format('gate ({0})', github.event_name) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 10
     permissions:
       contents: write        # enable auto-merge when no GitHub App is used
