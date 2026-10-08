@@ -17,7 +17,7 @@ set -euo pipefail
 
 REPO=${1:?Missing <owner/repo>}
 shift
-SCENARIOS=${*:-e1 e2 e4 e7 e9 e12 e14 env-example skip-main}
+SCENARIOS=${*:-e1 e2 e4 e7 e9 e12 e14 env-example skip-main draft}
 REMOTE=${REMOTE:-git@github-work:$REPO.git}
 BASE=${BASE:-develop}
 MAIN=${MAIN:-main}
@@ -291,11 +291,33 @@ skip_main() { # PR into main with gate.branches=[develop] → gate + convention 
   record SKIP "$(jq -r .url <<<"$j")" "PR into $MAIN → skipped"
 }
 
+draft() { # draft PR → heavy jobs skipped, gate green, nothing posted; ready for review → full run, gate red
+  log "DRAFT PR skips heavy checks until ready"
+  branch_from "$BASE" "feat/e2e-draft-$RUN_ID"
+  write "$WEB_DIR/app/e2e-draft-$RUN_ID.ts" "export const d: number = 'draft';"
+  push_branch "feat: e2e draft"
+  local url pr checks j
+  url=$(gh pr create -R "$REPO" --draft --base "$BASE" --head "$(git branch --show-current)" --title "feat: e2e draft $RUN_ID" \
+    --body $'## Summary\nAutomated harness e2e scenario.\n\n## How to test\nRun scripts/e2e-sandbox.sh.')
+  pr=${url##*/}
+  OPENED+=("$pr")
+  checks=$(wait_checks "$pr") || fail "DRAFT timed out waiting for checks"
+  check "DRAFT '$GATE' is green while draft" test "$(bucket "$checks" "$GATE")" = pass
+  check "DRAFT 'stack / react (web)' skipped" test "$(bucket_like "$checks" "^stack / react")" = skipping
+  j=$(pr_json "$pr")
+  check "DRAFT no harness report comment" test -z "$(report_comment "$j")"
+  gh pr ready "$pr" -R "$REPO" >/dev/null
+  sleep 30
+  checks=$(wait_checks "$pr") || fail "DRAFT timed out waiting for checks after ready"
+  check "DRAFT '$GATE' is red once ready (tsc error)" test "$(bucket "$checks" "$GATE")" = fail
+  record DRAFT "$url" "draft skips heavy checks; ready runs everything"
+}
+
 export BASE
 for s in $SCENARIOS; do
   case "$s" in
     e1) e1 ;; e2) e2 ;; e4) e4 ;; e7) e7 ;; e9) e9 ;; e12) e12 ;; e14) e14 ;;
-    env-example) env_example ;; skip-main) skip_main ;;
+    env-example) env_example ;; skip-main) skip_main ;; draft) draft ;;
     *) fail "unknown scenario: $s" ;;
   esac
 done
