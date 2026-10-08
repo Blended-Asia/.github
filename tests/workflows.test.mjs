@@ -84,3 +84,12 @@ test('stack.yml Node step: npm cache only when the nearest lockfile is package-l
   assert.equal(out({ 'pnpm-lock.yaml': 'x', 'apps/web/package.json': '{}' }, 'apps/web').cache, '', 'pnpm: no setup-node cache');
   assert.equal(out({ 'web/package.json': '{}' }, 'web').cache, '', 'no lockfile: no cache');
 });
+
+test('draft PRs skip the heavy sensor jobs (Trivy, Semgrep, Docker, Supabase, Rails, JS)', () => {
+  const heavy = { 'security.yml': ['dependencies', 'sast'], 'infra.yml': ['docker', 'supabase'], 'stack.yml': ['rails', 'js'] };
+  for (const [f, ids] of Object.entries(heavy)) {
+    const wf = loadYaml(path.join(ROOT, '.github/workflows', f));
+    for (const id of ids) assert.match(String(wf.jobs[id].if), /github\.event\.pull_request\.draft != true/, `${f} › ${id}`);
+    for (const [id, job] of Object.entries(wf.jobs)) if (!ids.includes(id)) assert.doesNotMatch(String(job.if ?? ''), /draft/, `${f} › ${id} stays on for drafts`);
+  }
+});

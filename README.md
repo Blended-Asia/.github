@@ -106,6 +106,7 @@ Existing repos are rolled out **observe first, enforce later**. Detailed instruc
 |---|---|---|
 | A job failed | ❌ | Sticky comment listing the job, `file:line` and the error (taken from the run's annotations) + log link |
 | Repo in `enforcement: observe` | 👀 | Comment "if enforced, would block because…", check always green, no approve/merge |
+| Draft PR | ⏸ | Heavy checks (Trivy, Semgrep, Docker, Supabase, Rails, JS) are skipped and nothing is posted; secret checks still run. Marking it Ready for review runs everything |
 | PR into a branch outside `gate.branches` (default: only the default branch; git-flow sets `[develop]`) | ⏭️ | `harness / gate` and `org / pr-convention` green, summary only, no comment/approve/merge |
 | AI review found `critical`/`major` issues | ❌ | Inline comments on the exact lines + summary in the sticky comment |
 | Passing, ≤ `max_lines` (default 200), no `human_required_paths` touched, matching `authors` | ✅ | Bot **approves** + enables **auto-merge** |

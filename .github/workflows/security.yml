@@ -175,6 +175,8 @@ jobs:
 
   dependencies:
     name: dependencies
+    # Draft PRs skip the heavy scans; they run in full on ready_for_review
+    if: github.event.pull_request.draft != true
     runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
@@ -250,7 +252,7 @@ jobs:
 
   sast:
     name: sast
-    if: inputs.semgrep
+    if: inputs.semgrep && github.event.pull_request.draft != true
     runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:

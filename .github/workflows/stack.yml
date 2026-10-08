@@ -87,7 +87,7 @@ jobs:
   rails:
     name: rails (${{ matrix.path }})
     needs: plan
-    if: needs.plan.outputs.rails != '[]'
+    if: needs.plan.outputs.rails != '[]' && github.event.pull_request.draft != true
     runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
@@ -152,7 +152,7 @@ jobs:
   js:
     name: ${{ matrix.name }} (${{ matrix.path }})
     needs: plan
-    if: needs.plan.outputs.js != '[]'
+    if: needs.plan.outputs.js != '[]' && github.event.pull_request.draft != true
     runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 25
     strategy:

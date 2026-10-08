@@ -475,3 +475,17 @@ test('gate.branches read from BASE: a PR adding its own branch to the skip list 
   assert.equal(r.skipped, undefined);
   assert.equal(r.blocked, true);
 });
+
+test('draft PR: not graded, nothing written on the PR, no approve/merge; failures of jobs that ran still block', async () => {
+  const ev = { pull_request: { number: 7, draft: true, head: { sha: SHA } } };
+  const clean = setup({ event: ev });
+  const r = await clean.run();
+  assert.equal(r.draft, true);
+  assert.equal(r.blocked, false);
+  assert.equal(r.botApprove, false);
+  assert.equal(clean.calls.filter((c) => c.method !== 'GET').length, 0, 'no comment, review, label or auto-merge');
+  const leak = await setup({ event: ev, jobs: [{ id: 1, name: 'security / secrets', status: 'completed', conclusion: 'failure', html_url: 'u1' }] }).run();
+  assert.equal(leak.blocked, true, 'a secret found in a draft still turns the check red');
+  const ready = await setup({ event: { pull_request: { number: 7, draft: false, head: { sha: SHA } } } }).run();
+  assert.equal(ready.draft, undefined, 'ready PRs are graded as usual');
+});

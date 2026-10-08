@@ -313,6 +313,13 @@ export async function main(env = process.env, { fetchImpl = globalThis.fetch } =
     return { blocked: blocked && !observe, wouldBlock: blocked, observe, failedJobs };
   }
 
+  // Draft PR (as seen by this run): heavy sensors were skipped, so do not grade or write anything on the PR.
+  // Failures of the jobs that did run (e.g. secrets) still turn the check red. ready_for_review triggers a full run.
+  if (pull.draft === true) {
+    summary(`### Harness gate: draft PR — heavy checks skipped, not graded. Mark it Ready for review to run everything.${blocked ? ` ❌ ${failedJobs.map((j) => j.name).join(', ')}` : ''}`);
+    return { blocked: blocked && !observe, wouldBlock: blocked, observe, failedJobs, draft: true, botApprove: false, mergeNotes: [] };
+  }
+
   // 2) Current PR state
   const pr = await gh.get(`${base}/pulls/${pull.number}`);
   // Stale run (re-run after the PR got a new commit): job results belong to the old commit → report only, write nothing

@@ -121,7 +121,7 @@ jobs:
   docker:
     name: docker
     needs: detect
-    if: needs.detect.outputs.docker == 'true'
+    if: needs.detect.outputs.docker == 'true' && github.event.pull_request.draft != true
     runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
@@ -385,7 +385,7 @@ jobs:
   supabase:
     name: supabase (${{ matrix.dir }})
     needs: detect
-    if: needs.detect.outputs.supabase == 'true'
+    if: needs.detect.outputs.supabase == 'true' && github.event.pull_request.draft != true
     runs-on: ${{ vars.HARNESS_RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
