@@ -206,3 +206,28 @@ test('NEXT_PUBLIC_*SERVICE_ROLE* variables → fail; NEXT_PUBLIC_SUPABASE_ANON_K
   });
   assert.equal(bash(s, { cwd: good.dir, env: { PREFIXES: S.public_env_prefixes } }).code, 0);
 });
+
+test('full-history secret scan: verified → error + exit 1, unverified → warning only; only runs on schedule/dispatch', () => {
+  const text = wf('security.yml');
+  const py = between(text, 'secrets-history');
+  const dir = mkdtempSync(path.join(tmpdir(), 'th-'));
+  const out = path.join(dir, 'th.jsonl');
+  const rec = (file, line, verified, detector = 'AWS') => JSON.stringify({
+    SourceMetadata: { Data: { Git: { file, line, commit: 'abcdef1234567' } } }, DetectorName: detector, Verified: verified, Raw: 'SHOULD-NOT-BE-PRINTED',
+  });
+  const run = (lines) => {
+    writeFileSync(out, lines.join('\n'));
+    return spawnSync('python3', ['-c', py], { encoding: 'utf8', env: { ...process.env, OUT: out, GITHUB_STEP_SUMMARY: '' } });
+  };
+  const bad = run(['trufflehog banner', rec('config/a.yml', 3, true), rec('lib/b.rb', 9, false, 'Generic'), '{broken']);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout, /::error file=config\/a\.yml,line=3,title=trufflehog AWS::Verified \(live\) secret in commit abcdef1/);
+  assert.match(bad.stdout, /::warning file=lib\/b\.rb,line=9,title=trufflehog Generic::Possible secret/);
+  assert.doesNotMatch(bad.stdout, /SHOULD-NOT-BE-PRINTED/, 'never print the secret itself');
+  assert.equal(run([rec('x', 1, false)]).status, 0, 'unverified only → does not fail');
+  assert.equal(run([]).status, 0);
+  const steps = text.split('\n');
+  const ifOf = (name) => steps[steps.findIndex((l) => l.trim() === `- name: ${name}`) + 1].trim();
+  assert.equal(ifOf('TruffleHog full history'), "if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'");
+  assert.equal(ifOf('TruffleHog (verified + unknown secrets)'), "if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'");
+});

@@ -39,6 +39,10 @@ on:
         description: "On PRs: new = block only CVEs new relative to the base lockfile (existing debt is only reported) · all = block every CVE"
         type: string
         default: new
+      trufflehog_version:
+        description: TruffleHog image version for the weekly full-history scan (keep in sync with the action pin)
+        type: string
+        default: "3.97.9"
       trivy_version:
         type: string
         default: "0.75.0"
@@ -64,12 +68,53 @@ jobs:
           persist-credentials: false
 
       - name: TruffleHog (verified + unknown secrets)
+        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
         uses: trufflesecurity/trufflehog@4dd8831c5f12599465d4d45c3c447b4018a34c85 # v3.97.9
         with:
           # The action does not handle merge_group itself → pass base/head explicitly so it doesn't rescan the whole history
           base: ${{ github.event.merge_group.base_sha || '' }}
           head: ${{ github.event.merge_group.head_sha || '' }}
           extra_args: --results=verified,unknown
+
+      # Weekly schedule / manual run: scan the WHOLE git history (all branches checked out by fetch-depth: 0),
+      # catching secrets that slipped past the local hook and PR checks. Fails on verified secrets only.
+      - name: TruffleHog full history
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.trufflehog_version }}
+        run: |
+          out="$RUNNER_TEMP/trufflehog.jsonl"
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo:ro" -e HOME=/tmp \
+            "ghcr.io/trufflesecurity/trufflehog:$VERSION" git file:///repo --results=verified,unknown --json --no-update >"$out" || true
+          OUT="$out" python3 - <<'PY'
+          # ---- secrets-history:begin ----
+          import json, os, sys
+          verified, unknown = [], []
+          for line in open(os.environ["OUT"], encoding="utf-8", errors="replace"):
+              line = line.strip()
+              if not line.startswith("{"):
+                  continue
+              try:
+                  r = json.loads(line)
+              except ValueError:
+                  continue
+              git = (r.get("SourceMetadata") or {}).get("Data", {}).get("Git", {})
+              f = {"file": git.get("file", ""), "line": git.get("line") or 0, "commit": (git.get("commit") or "")[:7],
+                   "detector": r.get("DetectorName", "unknown")}
+              (verified if r.get("Verified") else unknown).append(f)
+          for level, items in (("error", verified), ("warning", unknown)):
+              for f in items:
+                  what = "Verified (live) secret" if level == "error" else "Possible secret (unverified)"
+                  loc = f"file={f['file']},line={f['line']}," if f["file"] else ""
+                  print(f"::{level} {loc}title=trufflehog {f['detector']}::{what} in commit {f['commit']}. Rotate it, then remove it from history if needed.")
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as s:
+                  s.write(f"### Full-history secret scan: {len(verified)} verified, {len(unknown)} unverified\n")
+          print(f"{len(verified)} verified, {len(unknown)} unverified")
+          sys.exit(1 if verified else 0)
+          # ---- secrets-history:end ----
+          PY
 
       - name: No committed .env files / .vercel directory
         env:
