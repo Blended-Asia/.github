@@ -180,13 +180,31 @@ jobs:
         env:
           DIR: ${{ matrix.path }}
         run: |
+          # ---- node-version:begin ----
           f=""
           for c in "$DIR/.nvmrc" "$DIR/.node-version" ".nvmrc" ".node-version"; do [ -f "$c" ] && { f="$c"; break; }; done
           echo "file=$f" >> "$GITHUB_OUTPUT"
+          # npm cache keyed on the nearest package-lock.json (app dir up to the repo root, same lookup as detectPM).
+          # Only npm: setup-node's pnpm/yarn cache needs the tool installed before this step.
+          d=$DIR lock=""
+          while :; do
+            for l in pnpm-lock.yaml yarn.lock bun.lock bun.lockb package-lock.json; do
+              if [ -f "$d/$l" ]; then lock="$d/$l"; break 2; fi
+            done
+            [ "$d" = "." ] && break
+            d=$(dirname "$d")
+          done
+          case "$lock" in
+            */package-lock.json) { echo "cache=npm"; echo "lock=${lock#./}"; } >> "$GITHUB_OUTPUT" ;;
+            *) { echo "cache="; echo "lock="; } >> "$GITHUB_OUTPUT" ;;
+          esac
+          # ---- node-version:end ----
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: ${{ steps.nv.outputs.file }}
           node-version: ${{ steps.nv.outputs.file == '' && '24' || '' }}
+          cache: ${{ steps.nv.outputs.cache }}
+          cache-dependency-path: ${{ steps.nv.outputs.lock }}
       - name: ESLint · tsc · Prettier · dependency-cruiser
         env:
           PROFILE_PATH: ${{ matrix.path }}

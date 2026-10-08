@@ -73,3 +73,14 @@ test('runner: reusable jobs honour vars.HARNESS_RUNS_ON; this public repo\'s own
     }
   }
 });
+
+test('stack.yml Node step: npm cache only when the nearest lockfile is package-lock.json', async () => {
+  const { runBlock, gitRepo, bash, wf } = await import('./helpers.mjs');
+  const s = runBlock(wf('stack.yml'), 'Node version');
+  const out = (files, dir) => bash(s, { cwd: gitRepo(files).dir, env: { DIR: dir } }).outputs;
+  assert.deepEqual(out({ 'web/package-lock.json': '{}', 'web/.nvmrc': '24' }, 'web'), { file: 'web/.nvmrc', cache: 'npm', lock: 'web/package-lock.json' });
+  assert.deepEqual(out({ 'package-lock.json': '{}', 'apps/web/package.json': '{}' }, 'apps/web'), { file: '', cache: 'npm', lock: 'package-lock.json' }, 'workspace root lockfile');
+  assert.deepEqual(out({ 'package-lock.json': '{}' }, '.'), { file: '', cache: 'npm', lock: 'package-lock.json' });
+  assert.equal(out({ 'pnpm-lock.yaml': 'x', 'apps/web/package.json': '{}' }, 'apps/web').cache, '', 'pnpm: no setup-node cache');
+  assert.equal(out({ 'web/package.json': '{}' }, 'web').cache, '', 'no lockfile: no cache');
+});
