@@ -33,6 +33,7 @@ export function config(env = process.env) {
     ref: env.GUARD_REF || 'v1',
     owners: env.PLATFORM_OWNERS || '',
     outDir: env.OUT_DIR || '.',
+    minutesDays: Number(env.MINUTES_DAYS || 7),
     quiet: env.QUIET === 'true', // the repo running the audit is public → don't print repo names to the log
   };
 }
@@ -372,6 +373,26 @@ export async function auditRepo(gh, cfg, repo) {
   r.checks.vulnAlerts = va.status === 204 ? 'pass' : va.status === 404 ? 'fail' : 'unknown';
   if (r.checks.vulnAlerts === 'fail') add('warn', 'Dependabot alerts are disabled (free, should be enabled)');
 
+  // Dependabot security updates (free): opens PRs that bump vulnerable dependencies
+  const asf = await gh.get(`${base}/automated-security-fixes`, [403, 404]);
+  r.checks.depsUpdates = asf.status === 404 ? 'fail' : asf.data ? (asf.data.enabled ? 'pass' : 'fail') : 'unknown';
+  if (r.checks.depsUpdates === 'fail') add('warn', 'Dependabot security updates are disabled (free, should be enabled)');
+
+  // Local secret hook (lefthook / pre-commit / husky running gitleaks or trufflehog)
+  const hookFiles = files.filter((f) => HOOK_CONFIG.test(f)).slice(0, 5);
+  let hookOk = false;
+  for (const p of hookFiles) {
+    const c = await gh.get(`${base}/contents/${enc(p)}?ref=${ref}`, [404]);
+    if (c.data?.content && /gitleaks|trufflehog/.test(unb64(c.data.content))) { hookOk = true; break; }
+  }
+  r.checks.hooks = hookOk ? 'pass' : hookFiles.length ? 'warn' : 'fail';
+  if (r.checks.hooks === 'warn') add('warn', 'Git hooks exist but none runs gitleaks/trufflehog (see profiles/starter/hooks)');
+
+  // Latest weekly full-history secret scan and Actions minutes (both need the App's "Actions: Read" permission)
+  r.checks.secretScan = await latestSecretScan(gh, base);
+  if (r.checks.secretScan === 'fail') add('high', 'The latest weekly full-history secret scan failed (verified secret in git history) — rotate it');
+  r.actionsMinutes = await actionsMinutes(gh, base, cfg.minutesDays);
+
   let sa = repo.security_and_analysis;
   if (r.visibility === 'public' && !sa) sa = (await gh.get(base, [403, 404])).data?.security_and_analysis;
   if (r.visibility === 'public' && sa && sa.secret_scanning_push_protection?.status !== 'enabled') {
@@ -381,6 +402,40 @@ export async function auditRepo(gh, cfg, repo) {
   const days = (Date.now() - new Date(repo.pushed_at).getTime()) / 86400000;
   if (days > STALE_DAYS) add('info', `No pushes in ${Math.floor(days)} days — consider archiving`);
   return r;
+}
+
+const HOOK_CONFIG = /^(\.?lefthook\.ya?ml|\.pre-commit-config\.ya?ml|\.husky\/[^/]+)$/;
+
+/** Conclusion of the secrets job in the latest scheduled org-harness run: pass | fail | unknown. */
+async function latestSecretScan(gh, base) {
+  const runs = await gh.get(`${base}/actions/workflows/org-harness.yml/runs?event=schedule&status=completed&per_page=1`, [403, 404]);
+  const run = runs.data?.workflow_runs?.[0];
+  if (!run) return 'unknown';
+  const jobs = await gh.get(`${base}/actions/runs/${run.id}/jobs?filter=latest&per_page=100`, [403, 404]);
+  const job = (jobs.data?.jobs ?? []).find((j) => /(^|\/ )secrets$/.test(j.name));
+  if (!job) return 'unknown';
+  return job.conclusion === 'success' ? 'pass' : job.conclusion === 'failure' ? 'fail' : 'unknown';
+}
+
+/** Job minutes (each job rounded up, like billing) for runs created in the last `days` days; null without permission. */
+export async function actionsMinutes(gh, base, days = 7, maxRuns = 200) {
+  const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  let total = 0;
+  let seen = 0;
+  for (let page = 1; seen < maxRuns; page++) {
+    const runs = await gh.get(`${base}/actions/runs?created=%3E%3D${since}&per_page=100&page=${page}`, [403, 404]);
+    if (!runs.data) return page === 1 ? null : total;
+    const list = runs.data.workflow_runs ?? [];
+    for (const run of list.slice(0, maxRuns - seen)) {
+      const jobs = await gh.get(`${base}/actions/runs/${run.id}/jobs?filter=all&per_page=100`, [403, 404]);
+      for (const j of jobs.data?.jobs ?? []) {
+        if (j.started_at && j.completed_at) total += Math.ceil((new Date(j.completed_at) - new Date(j.started_at)) / 60000);
+      }
+    }
+    seen += list.length;
+    if (list.length < 100) break;
+  }
+  return total;
 }
 
 // ---------- Open fix PRs ----------
@@ -419,6 +474,11 @@ export async function planFixes(cfg, r, repo) {
       starter = starter.replace(/# gate:\n#   branches: \[develop\]\n/, `gate:\n  branches: [${JSON.stringify(r.branch)}]\n`);
     }
     out.push({ path: '.github/harness.yml', content: starter, message: 'ci: add harness config' });
+  }
+  if (r.checks.hooks === 'fail') {
+    for (const f of ['lefthook.yml', '.gitleaks.toml']) {
+      out.push({ path: f, content: await readFile(path.join(ROOT, 'profiles/starter/hooks', f), 'utf8'), message: 'chore: add local secret hook (lefthook + gitleaks)' });
+    }
   }
   if (!r.hasPrTemplate) {
     out.push({ path: '.github/pull_request_template.md', content: await readFile(path.join(ROOT, 'pull_request_template.md'), 'utf8'), message: 'docs: add PR template' });
@@ -496,18 +556,22 @@ export function render(cfg, results) {
   }
   lines.push(
     '## By repo', '',
-    '| Repo | Stack | Harness | Convention | Protection | CODEOWNERS | Deps bot | Vuln alerts | Notes |',
-    '|---|---|:-:|:-:|:-:|:-:|:-:|:-:|---|',
+    '| Repo | Stack | Harness | Convention | Protection | CODEOWNERS | Deps bot | Vuln alerts | Dep security updates | Secret hook | History scan | Actions min | Notes |',
+    '|---|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|--:|---|',
   );
   for (const r of active) {
     const c = r.checks;
     const notes = r.findings.filter((f) => !['critical', 'high'].includes(f.level)).map((f) => `${LEVEL[f.level]} ${f.msg}`);
     if (r.prUrl) notes.push(`🔧 [Fix PR](${r.prUrl})`);
     else if (r.fixes.length) notes.push(`🔧 will fix: ${r.fixes.map((f) => '`' + path.basename(f.path) + '`').join(', ')}`);
-    lines.push(`| [${r.name}](${r.url})${r.visibility === 'public' ? ' 🌐' : ''} | ${r.stacks.join(', ') || '-'} | ${ICON[c.harness]} | ${ICON[c.convention]} | ${ICON[c.protection]} | ${ICON[c.codeowners]} | ${ICON[c.depsBot]} | ${ICON[c.vulnAlerts]} | ${notes.join('<br>')} |`);
+    lines.push(`| [${r.name}](${r.url})${r.visibility === 'public' ? ' 🌐' : ''} | ${r.stacks.join(', ') || '-'} | ${ICON[c.harness]} | ${ICON[c.convention]} | ${ICON[c.protection]} | ${ICON[c.codeowners]} | ${ICON[c.depsBot]} | ${ICON[c.vulnAlerts]} | ${ICON[c.depsUpdates]} | ${ICON[c.hooks]} | ${ICON[c.secretScan]} | ${r.actionsMinutes ?? '❔'} | ${notes.join('<br>')} |`);
   }
   const empty = results.filter((r) => r.empty).map((r) => r.name);
   if (empty.length) lines.push('', `Empty repos (skipped): ${empty.join(', ')}`);
+  const minutes = active.filter((r) => typeof r.actionsMinutes === 'number');
+  if (minutes.length) {
+    lines.push('', `Actions minutes (job time, last ${cfg.minutesDays ?? 7} days): **${minutes.reduce((n, r) => n + r.actionsMinutes, 0)}** across ${minutes.length} repo(s). Public repos are free; private repos draw on the plan's included minutes.`);
+  }
   lines.push('', '<sub>✅ pass · ⚠️ partial/old ref · ❌ missing · ❔ insufficient read permission · 🌐 public</sub>');
   return lines.join('\n');
 }

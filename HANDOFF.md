@@ -92,7 +92,7 @@ Claude Code cannot create a GitHub App on the user's behalf. Guide them step by 
    gh variable set HARNESS_APP_CLIENT_ID --org <org> --body <client-id>
    gh secret set HARNESS_APP_PRIVATE_KEY --org <org> < key.pem
    ```
-2. **App "org audit"**: can be the same App if you add Administration R, Deployments R, Workflows R/W, Issues R/W. Store `ORG_AUDIT_APP_CLIENT_ID` (variable) and `ORG_AUDIT_APP_PRIVATE_KEY` (secret) in the `.github` repo.
+2. **App "org audit"**: can be the same App if you add Administration R, Deployments R, Workflows R/W, Issues R/W, and **Actions R** (weekly secret-scan result and Actions minutes per repo; without it those columns show ❔). Store `ORG_AUDIT_APP_CLIENT_ID` (variable) and `ORG_AUDIT_APP_PRIVATE_KEY` (secret) in the `.github` repo.
 3. Set `AUDIT_REPORT_REPO` = a private repo, and `PLATFORM_OWNERS`.
 4. If enabling AI: `gh secret set OPENAI_API_KEY --org <org>` (default `review.provider: openai`), or `gh secret set ANTHROPIC_API_KEY --org <org>` for `review.provider: anthropic`.
 5. Without an App, enable Org settings → Actions → "Allow GitHub Actions to create and approve pull requests".
