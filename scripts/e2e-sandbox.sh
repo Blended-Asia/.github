@@ -17,7 +17,7 @@ set -euo pipefail
 
 REPO=${1:?Missing <owner/repo>}
 shift
-SCENARIOS=${*:-e1 e2 e4 e7 e9 e12 e14 env-example skip-main draft}
+SCENARIOS=${*:-e1 e2 e4 e7 e9 e12 e14 skip-main draft}  # env-example: run manually (needs a sample env file committed)
 REMOTE=${REMOTE:-git@github-work:$REPO.git}
 BASE=${BASE:-develop}
 MAIN=${MAIN:-main}
@@ -303,7 +303,8 @@ draft() { # draft PR → heavy jobs skipped, gate green, nothing posted; ready f
   OPENED+=("$pr")
   checks=$(wait_checks "$pr") || fail "DRAFT timed out waiting for checks"
   check "DRAFT '$GATE' is green while draft" test "$(bucket "$checks" "$GATE")" = pass
-  check "DRAFT 'stack / react (web)' skipped" test "$(bucket_like "$checks" "^stack / react")" = skipping
+  # A skipped matrix job is reported with its unexpanded name, e.g. "stack / ${{ matrix.name }} (${{ matrix.path }})"
+  check "DRAFT JS job skipped" test "$(bucket_like "$checks" '^stack / (react|[$][{][{] matrix[.]name)')" = skipping
   j=$(pr_json "$pr")
   check "DRAFT no harness report comment" test -z "$(report_comment "$j")"
   gh pr ready "$pr" -R "$REPO" >/dev/null
