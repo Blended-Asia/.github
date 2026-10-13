@@ -93,3 +93,14 @@ test('draft PRs skip the heavy sensor jobs (Trivy, Semgrep, Docker, Supabase, Ra
     for (const [id, job] of Object.entries(wf.jobs)) if (!ids.includes(id)) assert.doesNotMatch(String(job.if ?? ''), /draft/, `${f} › ${id} stays on for drafts`);
   }
 });
+
+test('self-hosted safe: harness code is moved into a clean $RUNNER_TEMP/harness (runners may reuse the temp dir)', () => {
+  const moves = [];
+  for (const f of files) {
+    for (const { jobId, st } of steps(loadYaml(path.join(ROOT, f)))) {
+      if (typeof st.run === 'string' && /\bmv \.harness\b/.test(st.run)) moves.push([`${f} › ${jobId}`, st.run.trim()]);
+    }
+  }
+  assert.ok(moves.length >= 5);
+  for (const [where, run] of moves) assert.equal(run, 'rm -rf "$RUNNER_TEMP/harness" && mv .harness "$RUNNER_TEMP/harness"', where);
+});

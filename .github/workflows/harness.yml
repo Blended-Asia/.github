@@ -57,7 +57,7 @@ jobs:
             scripts/harness
             profiles
           persist-credentials: false
-      - run: mv .harness "$RUNNER_TEMP/harness"
+      - run: rm -rf "$RUNNER_TEMP/harness" && mv .harness "$RUNNER_TEMP/harness"
 
       # Approve/merge via a GitHub App (recommended): merges made by the App still trigger workflows on main,
       # while merges made with GITHUB_TOKEN do not. The App needs: Contents R/W, Pull requests R/W.

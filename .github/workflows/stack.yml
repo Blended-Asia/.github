@@ -50,7 +50,7 @@ jobs:
             profiles
           persist-credentials: false
       # Move it out of the workspace so the repo's ESLint/Prettier don't scan harness code by mistake
-      - run: mv .harness "$RUNNER_TEMP/harness"
+      - run: rm -rf "$RUNNER_TEMP/harness" && mv .harness "$RUNNER_TEMP/harness"
       - id: plan
         env:
           HARNESS_DIR: ${{ runner.temp }}/harness
@@ -76,7 +76,7 @@ jobs:
             profiles
           persist-credentials: false
       # Move it out of the workspace so the repo's ESLint/Prettier don't scan harness code by mistake
-      - run: mv .harness "$RUNNER_TEMP/harness"
+      - run: rm -rf "$RUNNER_TEMP/harness" && mv .harness "$RUNNER_TEMP/harness"
       - name: Architecture rules
         env:
           HARNESS_DIR: ${{ runner.temp }}/harness
@@ -109,7 +109,7 @@ jobs:
             profiles
           persist-credentials: false
       # Move it out of the workspace so the repo's ESLint/Prettier don't scan harness code by mistake
-      - run: mv .harness "$RUNNER_TEMP/harness"
+      - run: rm -rf "$RUNNER_TEMP/harness" && mv .harness "$RUNNER_TEMP/harness"
       - name: Ruby version
         id: rv
         env:
@@ -174,7 +174,7 @@ jobs:
             profiles
           persist-credentials: false
       # Move it out of the workspace so the repo's ESLint/Prettier don't scan harness code by mistake
-      - run: mv .harness "$RUNNER_TEMP/harness"
+      - run: rm -rf "$RUNNER_TEMP/harness" && mv .harness "$RUNNER_TEMP/harness"
       - name: Node version
         id: nv
         env:
