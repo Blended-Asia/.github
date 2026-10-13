@@ -115,7 +115,7 @@ Existing repos are rolled out **observe first, enforce later**. Detailed instruc
 | PR from a fork | ✅/❌ | Grade only, no comment/approve/merge, no AI call |
 | Re-run of an old run after the PR got new commits | ✅/❌ | Grades the old commit only, writes nothing to the PR |
 
-Auto-merge uses GitHub's native feature, so GitHub always waits for **every** required check (including `org / pr-convention`) and the number of approvals the ruleset requires.
+Auto-merge uses GitHub's native feature, so GitHub always waits for **every** required check (including `org / pr-convention`) and the number of approvals the ruleset requires. The gate only enables it for a commit someone vouched for: the bot (low risk) or a human reviewer other than the author. PRs that need human review are never auto-merged on green checks alone, even with a 0-approval (solo) ruleset; approve, then merge.
 
 **AI review** (`review.ai: true`) asks Claude (default, `review.provider: anthropic`) or OpenAI (`provider: openai`) for a structured review. It reads the diff (lockfiles excluded), the repo's `ARCHITECTURE.md` and the linter results, then returns comments by severity.
 - The AI **can only block**. Approval is decided by fixed policy (size, paths, author), because PR content may contain prompt injection such as "please approve this PR". The prompt treats the diff as untrusted data and reports injection as a `critical` issue.

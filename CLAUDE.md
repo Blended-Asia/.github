@@ -86,6 +86,7 @@ Before committing: run both the tests and actionlint. If you change `stack.mjs`,
     - Intentional exception: committed `.env*`/`.vercel/` files always block.
 12. `enforcement: observe` **never** approves or enables auto-merge, and the gate always exits 0. Since config is read from base, a PR cannot switch itself between observe and enforce.
 13. org-audit: the `.github` repo is public → quiet mode (no repo names in logs); reports go to the private repo `AUDIT_REPORT_REPO`. Modified callers are only reported, never overwritten automatically.
+14. **Auto-merge only for a vouched commit:** the gate enables auto-merge only when the bot approved this head SHA or a human other than the author approved it; it disables auto-merge it enabled earlier when a new commit needs human review. Otherwise a 0-approval (solo) ruleset would merge sensitive PRs on green checks alone.
 
 Any change touching the points above must include tests proving the invariant still holds, and must say so explicitly in the PR description.
 

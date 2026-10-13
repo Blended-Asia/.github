@@ -130,16 +130,38 @@ test('writes with the App token when available, reads with GITHUB_TOKEN', async 
   assert.ok(posted(t.calls, /\/reviews$|graphql|comments/).every((c) => auth(c) === 'Bearer app'));
 });
 
-test('touches a migration → no approve, still enables auto-merge pending human review', async () => {
-  const t = setup({ files: [{ filename: 'supabase/migrations/2026_x.sql', additions: 5, deletions: 0, patch: PATCH }] });
+test('touches a migration → no bot approve and NO auto-merge until a human approves this commit', async () => {
+  const mig = [{ filename: 'supabase/migrations/2026_x.sql', additions: 5, deletions: 0, patch: PATCH }];
+  const t = setup({ files: mig });
   const r = await t.run();
   assert.equal(r.blocked, false);
   assert.equal(r.botApprove, false);
   assert.equal(posted(t.calls, /\/reviews$/).length, 0);
-  assert.equal(posted(t.calls, /graphql/).length, 1);
+  assert.equal(posted(t.calls, /graphql/).length, 0, 'a 0-approval ruleset (solo) must not merge it on green checks alone');
   const body = reportBody(t.calls);
   assert.match(body, /touches paths requiring human review: `supabase\/migrations\/2026_x\.sql`/);
   assert.match(body, /Needs human review: touches paths requiring human review/);
+  assert.match(body, /Auto-merge not enabled: approve the PR first/);
+
+  const human = { commit_id: SHA, state: 'APPROVED', user: { login: 'lead', type: 'User' }, body: '' };
+  const approved = setup({ files: mig, reviews: [human] });
+  await approved.run();
+  assert.match(posted(approved.calls, /graphql/)[0].body.query, /enablePullRequestAutoMerge/, 'a human approval on this commit unlocks auto-merge');
+
+  const self = setup({ files: mig, reviews: [{ ...human, user: { login: 'thao', type: 'User' } }] });
+  await self.run();
+  assert.equal(posted(self.calls, /graphql/).length, 0, "the author's own approval does not count");
+  const stale = setup({ files: mig, reviews: [{ ...human, commit_id: 'old' }] });
+  await stale.run();
+  assert.equal(posted(stale.calls, /graphql/).length, 0, 'an approval of an older commit does not count');
+
+  const ours = setup({ files: mig, pr: { auto_merge: { enabled_by: { login: 'github-actions[bot]' } } } });
+  await ours.run();
+  assert.match(posted(ours.calls, /graphql/)[0].body.query, /disablePullRequestAutoMerge/, 'auto-merge the bot enabled for an earlier low-risk commit is turned off');
+  assert.match(reportBody(ours.calls), /Auto-merge disabled: this commit needs a human approval first/);
+  const theirs = setup({ files: mig, pr: { auto_merge: { enabled_by: { login: 'lead' } } } });
+  await theirs.run();
+  assert.equal(posted(theirs.calls, /graphql/).length, 0, 'auto-merge enabled by a human is left alone');
 });
 
 test('large PR, draft, author not on list → no approve', async () => {

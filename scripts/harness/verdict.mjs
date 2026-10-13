@@ -544,7 +544,20 @@ export async function main(env = process.env, { fetchImpl = globalThis.fetch, ru
       mergeNotes.push(`👀 Needs human review: ${noApprove.join(', ')}.`);
     }
 
-    if (!blocked && !observe && policy.merge.auto && !pr.draft) {
+    // Auto-merge only when someone vouched for this exact commit: the bot (low risk) or a human other than the author.
+    // Otherwise a ruleset requiring 0 approvals (solo repos) would merge PRs that need human review on green checks alone.
+    const humanApproved = reviews.some((rv) => rv.state === 'APPROVED' && rv.commit_id === pr.head.sha && !byBot(rv) && rv.user?.login !== pr.user.login);
+    const vouched = botApprove || humanApproved;
+    const ourAutoMerge = pr.auto_merge && pr.auto_merge.enabled_by?.login === botLogin;
+    if (!blocked && !observe && policy.merge.auto && !pr.draft && !vouched) {
+      if (ourAutoMerge) {
+        await ghw.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id })
+          .then(() => mergeNotes.push('⏸ Auto-merge disabled: this commit needs a human approval first.'))
+          .catch((e) => mergeNotes.push(`⚠️ Could not disable auto-merge: ${short(e.message, 160)}`));
+      } else if (!pr.auto_merge) {
+        mergeNotes.push('⏸ Auto-merge not enabled: approve the PR first, then merge it (or enable auto-merge).');
+      }
+    } else if (!blocked && !observe && policy.merge.auto && !pr.draft) {
       if (pr.auto_merge) mergeNotes.push('🔀 Auto-merge is already enabled.');
       else {
         const method = (policy.merge.method ?? 'squash').toUpperCase();
