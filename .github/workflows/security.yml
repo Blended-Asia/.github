@@ -192,7 +192,8 @@ jobs:
           IGNORE_UNFIXED: ${{ inputs.ignore_unfixed }}
           FAIL_ON: ${{ inputs.fail_on }}
         run: |
-          out="$RUNNER_TEMP/trivy"; mkdir -p "$out" "$RUNNER_TEMP/trivy-cache"
+          # Self-hosted runners may keep $RUNNER_TEMP between jobs: start from empty output/base dirs
+          out="$RUNNER_TEMP/trivy"; rm -rf "$out"; mkdir -p "$out" "$RUNNER_TEMP/trivy-cache"
           # --config points to an empty file: a trivy.yaml in the PR must not disable/skip files when scanning itself
           : > "$out/empty.yaml"
           args=(fs --config /out/empty.yaml --scanners vuln --severity "$SEVERITY" --format json --skip-dirs node_modules --exit-code 0)
@@ -204,6 +205,7 @@ jobs:
           scan "$PWD" head.json
           if [ -n "$BASE_SHA" ] && [ "$FAIL_ON" = "new" ]; then
             # Scan the base lockfile so only CVEs introduced by the PR block; pre-existing CVEs are only reported
+            rm -rf "$RUNNER_TEMP/base"; git worktree prune
             git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
             scan "$RUNNER_TEMP/base" base.json
           fi

@@ -1,7 +1,7 @@
 // Rules for this repo's own workflows: no ${{ }} in script bodies, actions pinned by SHA.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { loadYaml } from '../scripts/harness/lib.mjs';
 import { ROOT } from './helpers.mjs';
@@ -115,5 +115,16 @@ test('caller templates never use `secrets: inherit` and pass only secrets the re
       const declared = Object.keys((callee.on ?? callee.true).workflow_call.secrets ?? {}); // Ruby YAML reads `on:` as true
       for (const k of Object.keys(job.secrets)) assert.ok(declared.includes(k), `${f} › ${id} passes undeclared secret ${k}`);
     }
+  }
+});
+
+test('self-hosted safe: fixed-name dirs under $RUNNER_TEMP are cleared before use', () => {
+  const text = ['security.yml', 'infra.yml'].map((f) => [f, readFileSync(path.join(ROOT, '.github/workflows', f), 'utf8')]);
+  for (const [f, t] of text) {
+    for (const m of t.matchAll(/git worktree add --detach "\$RUNNER_TEMP\/base"/g)) {
+      const before = t.slice(Math.max(0, m.index - 200), m.index);
+      assert.match(before, /rm -rf "\$RUNNER_TEMP\/base"; git worktree prune/, `${f}: stale base worktree`);
+    }
+    for (const m of t.matchAll(/out="\$RUNNER_TEMP\/(trivy|hadolint)";([^\n]*)/g)) assert.match(m[2], /^ rm -rf "\$out"; mkdir -p/, `${f}: ${m[1]} output dir`);
   }
 });

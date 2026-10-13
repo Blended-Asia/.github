@@ -132,6 +132,8 @@ jobs:
 
       - name: Base checkout for comparison (PRs only)
         run: |
+          # Self-hosted runners may keep $RUNNER_TEMP between jobs: a stale base dir must never be used as baseline
+          rm -rf "$RUNNER_TEMP/base"; git worktree prune
           if [ -n "$BASE_SHA" ]; then git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"; fi
 
       - name: Hadolint
@@ -148,7 +150,7 @@ jobs:
             mapfile -t files < <(git ls-files | grep -E "$re" || true)
           fi
           [ ${#files[@]} -eq 0 ] && { echo "No Dockerfiles to check"; exit 0; }
-          out="$RUNNER_TEMP/hadolint"; mkdir -p "$out"
+          out="$RUNNER_TEMP/hadolint"; rm -rf "$out"; mkdir -p "$out"
           args=(--format json --no-fail)
           for c in ${IGNORE//,/ }; do args+=(--ignore "$c"); done
           for c in ${ERROR_RULES//,/ }; do args+=(--error "$c"); done
@@ -191,7 +193,7 @@ jobs:
           SEV: ${{ inputs.misconfig_severity }}
           IGNORE: ${{ inputs.misconfig_ignore }}
         run: |
-          out="$RUNNER_TEMP/trivy"; mkdir -p "$out" "$RUNNER_TEMP/trivy-cache"
+          out="$RUNNER_TEMP/trivy"; rm -rf "$out"; mkdir -p "$out" "$RUNNER_TEMP/trivy-cache"
           : > "$out/empty.yaml"   # ignore the repo's trivy.yaml (a PR cannot disable the scan)
           scan() {
             { if [ -f "$1/.trivyignore" ]; then cat "$1/.trivyignore"; echo; fi; tr ',' '\n' <<<"$IGNORE"; } > "$out/ignore-$2"
