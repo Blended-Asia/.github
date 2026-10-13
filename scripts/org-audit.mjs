@@ -453,9 +453,10 @@ async function template(cfg, file, branch) {
 /** New repos have no debt: enforce from day one and require every touched file to be clean. */
 export function starterForNewRepo(text) {
   const out = text
+    .replace(/^# Start in observe mode:[^\n]*\n# After 1–2 weeks[^\n]*\n/m, '# New repo: enforced from day one (PRs that fail the harness are blocked). Use observe only for repos with existing debt.\n')
     .replace(/^enforcement: observe$/m, 'enforcement: enforce')
     .replace(/^convention:\n  scope: changed[^\n]*\n/m, 'convention:\n  scope: changed            # changed | all\n  granularity: file         # new code: every file a PR touches must be fully clean\n');
-  if (!/^enforcement: enforce$/m.test(out) || !/granularity: file/.test(out)) throw new Error('starter harness.yml changed: update starterForNewRepo');
+  if (!/^enforcement: enforce$/m.test(out) || !/granularity: file/.test(out) || /observe mode/.test(out)) throw new Error('starter harness.yml changed: update starterForNewRepo');
   return out;
 }
 
@@ -497,7 +498,12 @@ export async function planFixes(cfg, r, repo) {
     out.push({ path: '.github/pull_request_template.md', content: await readFile(path.join(ROOT, 'pull_request_template.md'), 'utf8'), message: 'docs: add PR template' });
   }
   if (cfg.owners && r.checks.codeowners === 'fail') {
-    out.push({ path: '.github/CODEOWNERS', content: `# CI and harness config changes require platform review\n/.github/ ${cfg.owners}\n`, message: 'chore: add CODEOWNERS for .github' });
+    // The local secret hook config is protected too: loosening it should not slip through review
+    out.push({
+      path: '.github/CODEOWNERS',
+      content: `# CI, harness and secret-hook config changes require platform review\n/.github/ ${cfg.owners}\n/lefthook.yml ${cfg.owners}\n/.gitleaks.toml ${cfg.owners}\n`,
+      message: 'chore: add CODEOWNERS for .github and the secret hook',
+    });
   }
   // Dedupe by path (later entries override earlier ones)
   return [...new Map(out.map((f) => [f.path, f])).values()];

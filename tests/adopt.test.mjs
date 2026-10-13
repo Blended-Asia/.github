@@ -178,3 +178,13 @@ test('reconcile: one bad repo does not stop the others; invalid registry files f
   await assert.rejects(loadRegistry(bad), /file name must match/);
   await assert.rejects(reconcile({ ORG: 'acme', GH_TOKEN: 'h', MANIFEST_DIR: dir }), /Missing ADMIN_TOKEN/);
 });
+
+test('generated files for a new repo: no stale "observe" wording; CODEOWNERS also covers the secret hook', async () => {
+  const dir = registry({ 'app.yml': entryYaml({ repo: 'app', kind: 'new', team: 'solo', flow: 'trunk' }) });
+  await reconcile({ ORG: 'acme', GH_TOKEN: 'h', ADMIN_TOKEN: 'a', MANIFEST_DIR: dir, PLATFORM_OWNERS: '@acme/platform' });
+  const harness = unb64(put('/repos/acme/app/contents/.github/harness.yml').body.content);
+  assert.doesNotMatch(harness, /observe mode/);
+  assert.match(harness, /New repo: enforced from day one/);
+  const owners = unb64(put('/repos/acme/app/contents/.github/CODEOWNERS').body.content);
+  for (const p of ['/.github/', '/lefthook.yml', '/.gitleaks.toml']) assert.match(owners, new RegExp(`^${p.replace(/[.]/g, '\\.')} @acme/platform$`, 'm'));
+});
