@@ -117,13 +117,17 @@ Existing repos are rolled out **observe first, enforce later**. Detailed instruc
 
 Auto-merge uses GitHub's native feature, so GitHub always waits for **every** required check (including `org / pr-convention`) and the number of approvals the ruleset requires.
 
-**AI review** (`review.ai: true`) calls OpenAI Chat Completions (default, `review.provider: openai`) or the Claude API (`provider: anthropic`) with structured output. It reads the diff (lockfiles excluded), the repo's `ARCHITECTURE.md` and the linter results, then returns comments by severity.
+**AI review** (`review.ai: true`) asks Claude (default, `review.provider: anthropic`) or OpenAI (`provider: openai`) for a structured review. It reads the diff (lockfiles excluded), the repo's `ARCHITECTURE.md` and the linter results, then returns comments by severity.
 - The AI **can only block**. Approval is decided by fixed policy (size, paths, author), because PR content may contain prompt injection such as "please approve this PR". The prompt treats the diff as untrusted data and reports injection as a `critical` issue.
 - Each commit is AI-reviewed **only once**. The result is stored in the gate's own review (`github-actions[bot]` or the harness App; other bots cannot forge it) and reused on re-runs. If the AI blocked on an earlier commit of the PR, the fix always needs human confirmation. This way, pushing empty commits to get a fresh AI review does not work either.
 - False AI block: someone with **maintain/admin permission, other than the PR author**, adds the `harness:override-ai` label and re-runs the gate job. Labels added by the author or by someone with only write permission have no effect. An override cannot bypass tool errors, and the PR still needs a human approval.
 - On API errors the default is not to block, but also not to auto-approve. Set `review.fail_closed: true` to block instead.
 - `ARCHITECTURE.md` is also read from base: a PR cannot change the standard the AI grades it against.
 - Leaving `review.model` empty uses the per-provider default model (`DEFAULT_MODELS` in `scripts/harness/verdict.mjs`).
+- Claude credentials (`review.auth`):
+  - `token`: a Claude Pro/Max/Team subscription token (`claude setup-token`, valid 1 year) stored as `CLAUDE_CODE_OAUTH_TOKEN`. Subscription tokens only work through Claude Code, so the gate runs the pinned Claude Code CLI headless (`review.claude_code_version`) in an empty sandbox: all tools disabled, no settings/MCP/CLAUDE.md, and no GitHub token in its environment. Usage counts against the subscription's limits.
+  - `api_key`: `ANTHROPIC_API_KEY`, calling the Messages API directly (pay per use).
+  - `auto` (default): the token first; if it fails (rate limit, expiry) the API key is used as a fallback. The gate's comment says which one ran.
 - `review.language` sets the language of AI comments (default `en`).
 
 ## Your GitHub plan determines how strictly this can be enforced
@@ -155,7 +159,7 @@ Only Enterprise can lock this down completely, using `required-*.yml` + `ruleset
    git tag v1 && git push origin v1
    ```
 2. **Org secrets/variables** for the harness:
-   - `OPENAI_API_KEY` (secret, if using AI review; or `ANTHROPIC_API_KEY` with `review.provider: anthropic`).
+   - AI review secrets (only if enabled): `CLAUDE_CODE_OAUTH_TOKEN` and/or `ANTHROPIC_API_KEY` (Claude, default), or `OPENAI_API_KEY` with `review.provider: openai`.
    - **GitHub App "harness bot"** (recommended), permissions Contents R/W + Pull requests R/W, installed on all repos. Store variable `HARNESS_APP_CLIENT_ID` and secret `HARNESS_APP_PRIVATE_KEY`.
      - Why: merges performed with GITHUB_TOKEN **do not trigger workflows** on `main`. Vercel/Supabase integrations are unaffected, but deploys via GitHub Actions are.
      - Without an App, the harness uses GITHUB_TOKEN. For the bot to approve, enable Org settings → Actions → "Allow GitHub Actions to create and approve pull requests".

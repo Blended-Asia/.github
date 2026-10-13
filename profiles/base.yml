@@ -12,8 +12,12 @@ convention:
                             # file: every file the PR touches must be fully clean (suits new repos)
 
 review:
-  ai: false                 # true: enable AI review (needs the OPENAI_API_KEY secret, or ANTHROPIC_API_KEY if provider: anthropic)
-  provider: openai          # openai (Chat Completions + Structured Outputs) | anthropic
+  ai: false                 # true: enable AI review (secrets: see provider/auth below)
+  provider: anthropic       # anthropic (Claude) | openai (Chat Completions + Structured Outputs, needs OPENAI_API_KEY)
+  auth: auto                # anthropic only. token: Claude subscription token (CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`),
+                            #   run through Claude Code headless · api_key: ANTHROPIC_API_KEY, Messages API directly
+                            #   · auto: token first, API key as fallback (e.g. subscription rate-limited)
+  claude_code_version: "2.1.296"   # pinned Claude Code CLI used with the subscription token
   diff_exclude:             # excluded from the diff sent to the AI (noisy, costs tokens). Lockfiles always require a human reviewer anyway.
     - "**/package-lock.json"
     - "**/pnpm-lock.yaml"

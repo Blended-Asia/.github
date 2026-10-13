@@ -100,7 +100,8 @@ merge:
   assert.deepEqual(cfg.rules.find((r) => r.id === 'rails/view-no-query').paths, ['api/app/views/**/*.{erb,haml,slim}']);
   assert.equal(cfg.merge.bot_approve.max_lines, 50);
   assert.equal(cfg.merge.bot_approve.enabled, true, 'keeps the base default');
-  assert.equal(cfg.review.provider, 'openai', 'keeps the base default');
+  assert.equal(cfg.review.provider, 'anthropic', 'keeps the base default');
+  assert.equal(cfg.review.auth, 'auto');
 });
 
 test('resolveConfig: clear errors for invalid regex or unknown profile', () => {

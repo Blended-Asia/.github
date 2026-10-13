@@ -3,7 +3,9 @@
 //   Pass   → summary comment; if low-risk the bot approves; enable auto-merge (GitHub merges once requirements are met).
 // The AI can only BLOCK. Approval is decided by fixed policy (size, sensitive paths, author).
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { deepMerge, globToRegExp, loadYaml, loadYamlAt, matchAny, readText, showAt, summary } from './lib.mjs';
 import { DEFAULT_HARNESS_DIR } from './config.mjs';
@@ -139,7 +141,7 @@ export function trimDiff(diff, excludeRes, maxChars) {
   return { text, truncated };
 }
 
-export async function aiReview({ fetchImpl, apiKey, policy, pr, diff, guidelines, findings }) {
+export async function aiReview({ fetchImpl, apiKey, oauthToken, runClaude = runClaudeCode, policy, pr, diff, guidelines, findings }) {
   const lang = { vi: 'Vietnamese', en: 'English' }[policy.review.language] ?? policy.review.language ?? 'English';
   const system = [
     'You are a senior code reviewer acting as a merge gate for a pull request.',
@@ -164,9 +166,90 @@ export async function aiReview({ fetchImpl, apiKey, policy, pr, diff, guidelines
   const call = PROVIDERS[provider];
   if (!call) throw new Error(`review.provider not supported: ${provider} (only ${Object.keys(PROVIDERS).join(', ')})`);
   const model = policy.review.model || DEFAULT_MODELS[provider];
-  const out = await call({ fetchImpl, apiKey, model, system, user });
+  let out;
+  let via = provider === 'anthropic' ? 'Anthropic API key' : 'OpenAI API key';
+  // Anthropic: a Claude subscription token (`claude setup-token`) only works through Claude Code, so it runs the CLI
+  // headless; an API key calls the Messages API directly. auth: auto = token first, API key as fallback.
+  const auth = provider === 'anthropic' ? (policy.review.auth || 'auto') : 'api_key';
+  if (!['auto', 'token', 'api_key'].includes(auth)) throw new Error(`review.auth must be auto|token|api_key (got ${auth})`);
+  if (auth !== 'api_key' && oauthToken) {
+    try {
+      out = await runClaude({ token: oauthToken, model, system, user, schema: REVIEW_SCHEMA, version: policy.review.claude_code_version });
+      via = 'Claude Code (subscription token)';
+    } catch (e) {
+      if (auth === 'token' || !apiKey) throw e;
+      via = `Anthropic API key (fallback: Claude Code failed: ${e.message.slice(0, 120)})`;
+    }
+  } else if (auth === 'token') {
+    throw new Error('review.auth is token but CLAUDE_CODE_OAUTH_TOKEN is missing');
+  }
+  if (!out) out = await call({ fetchImpl, apiKey, model, system, user });
   out.comments = (out.comments ?? []).filter((c) => SEVERITIES.includes(c.severity));
+  out.via = via;
   return out;
+}
+
+/** Which secret(s) let AI review run for this policy (null when nothing is missing). */
+export function missingAiSecret(policy, env) {
+  const provider = policy.review?.provider || 'openai';
+  if (provider !== 'anthropic') return env[API_KEY_ENV[provider] ?? 'OPENAI_API_KEY'] ? null : (API_KEY_ENV[provider] ?? 'OPENAI_API_KEY');
+  const auth = policy.review?.auth || 'auto';
+  const token = env.CLAUDE_CODE_OAUTH_TOKEN;
+  const key = env.ANTHROPIC_API_KEY;
+  if (auth === 'token') return token ? null : 'CLAUDE_CODE_OAUTH_TOKEN';
+  if (auth === 'api_key') return key ? null : 'ANTHROPIC_API_KEY';
+  return token || key ? null : 'CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY';
+}
+
+/**
+ * Runs Claude Code headless with a subscription token. Isolation: empty temp cwd and HOME (no CLAUDE.md, settings or
+ * MCP from anywhere), every tool disabled, no session saved, and a minimal env (no GitHub tokens reach the child).
+ * The CLI is installed once per version under the runner tool cache.
+ */
+export async function runClaudeCode({ token, model, system, user, schema, version, spawnImpl = spawn, env = process.env, timeoutMs = 600000 }) {
+  const ver = version || CLAUDE_CODE_VERSION;
+  const bin = env.CLAUDE_CLI || await ensureClaudeCli(ver, { spawnImpl, env });
+  const sandbox = mkdtempSync(path.join(tmpdir(), 'claude-review-'));
+  const args = ['-p', 'Review the pull request in the input. Answer only with the structured output.',
+    '--output-format', 'json', '--json-schema', JSON.stringify(schema), '--tools', '', '--strict-mcp-config',
+    '--no-session-persistence', '--system-prompt', system, '--model', model];
+  const childEnv = { PATH: env.PATH ?? '', HOME: sandbox, CLAUDE_CODE_OAUTH_TOKEN: token, DISABLE_AUTOUPDATER: '1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' };
+  const { code, stdout, stderr } = await runProcess(spawnImpl, bin, args, { cwd: sandbox, env: childEnv, input: user, timeoutMs });
+  let data;
+  try {
+    data = JSON.parse(stdout);
+  } catch {
+    throw new Error(`Claude Code exited ${code} without JSON: ${(stderr || stdout).trim().slice(-200)}`);
+  }
+  if (data.is_error || data.subtype !== 'success') throw new Error(`Claude Code: ${data.subtype ?? 'error'}${data.api_error_status ? ` (HTTP ${data.api_error_status})` : ''} ${String(data.result ?? '').slice(0, 150)}`.trim());
+  if (!data.structured_output) throw new Error('Claude Code: no structured_output in result');
+  return data.structured_output;
+}
+
+export const CLAUDE_CODE_VERSION = '2.1.296';
+
+async function ensureClaudeCli(version, { spawnImpl, env }) {
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`invalid claude_code_version: ${version}`);
+  const dir = path.join(env.RUNNER_TOOL_CACHE || tmpdir(), 'claude-code', version);
+  const bin = path.join(dir, 'node_modules', '.bin', 'claude');
+  if (existsSync(bin)) return bin;
+  const r = await runProcess(spawnImpl, 'npm', ['install', '--prefix', dir, '--no-audit', '--no-fund', '--loglevel=error', `@anthropic-ai/claude-code@${version}`], { env, timeoutMs: 300000 });
+  if (r.code !== 0 || !existsSync(bin)) throw new Error(`could not install Claude Code ${version}: ${r.stderr.trim().slice(-200)}`);
+  return bin;
+}
+
+function runProcess(spawnImpl, cmd, args, { cwd, env, input, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const child = spawnImpl(cmd, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`${path.basename(cmd)} timed out after ${timeoutMs / 1000}s`)); }, timeoutMs);
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', (e) => { clearTimeout(timer); reject(e); });
+    child.on('close', (code) => { clearTimeout(timer); resolve({ code, stdout, stderr }); });
+    child.stdin.end(input ?? '');
+  });
 }
 
 export const DEFAULT_MODELS = { openai: 'gpt-5', anthropic: 'claude-sonnet-5-5' };
@@ -260,7 +343,7 @@ export function renderReport(r) {
 }
 
 // ---------- Main ----------
-export async function main(env = process.env, { fetchImpl = globalThis.fetch } = {}) {
+export async function main(env = process.env, { fetchImpl = globalThis.fetch, runClaude } = {}) {
   const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'));
   const [owner, repo] = env.GITHUB_REPOSITORY.split('/');
   const api = env.GITHUB_API_URL || 'https://api.github.com';
@@ -353,12 +436,13 @@ export async function main(env = process.env, { fetchImpl = globalThis.fetch } =
   const aiOn = policy.review?.ai === true;
   const aiKeyName = API_KEY_ENV[policy.review?.provider || 'openai'] ?? 'OPENAI_API_KEY';
   const aiKey = env[aiKeyName];
+  const aiMissing = aiOn ? missingAiSecret(policy, env) : null;
   const prior = reviews.find((rv) => byBot(rv) && rv.body?.includes(AI_MARKER(pr.head.sha)));
   if (aiOn && prior) {
     const m = /blockers=(\d+) verdict=(\w+)/.exec(prior.body);
     aiReused = { blockers: Number(m?.[1] ?? 0), verdict: m?.[2] ?? 'approve' };
     aiNote = `Reusing the existing AI review result for commit \`${pr.head.sha.slice(0, 7)}\` (${aiReused.blockers} blocker(s)). Push a new commit to re-review.`;
-  } else if (aiOn && !aiKey) aiNote = `AI review is enabled but secret ${aiKeyName} is missing.`;
+  } else if (aiOn && aiMissing) aiNote = `AI review is enabled but secret ${aiMissing} is missing.`;
   else if (aiOn && isFork) aiNote = 'Skipping AI review for fork PR (no secrets available).';
   else if (aiOn) {
     try {
@@ -370,10 +454,11 @@ export async function main(env = process.env, { fetchImpl = globalThis.fetch } =
         ? (configRef ? showAt(configRef, gpath, repoDir) : readText(path.join(repoDir, gpath)))
         : null;
       ai = await aiReview({
-        fetchImpl, apiKey: aiKey, policy, pr, diff: text,
+        fetchImpl, apiKey: aiKey, oauthToken: env.CLAUDE_CODE_OAUTH_TOKEN, runClaude, policy, pr, diff: text,
         guidelines: gfile ? gfile.slice(0, 30000) : null,
         findings: [...failedJobs.flatMap((j) => j.findings), ...warnings],
       });
+      aiNote = `AI review via ${ai.via}.`;
     } catch (e) {
       aiError = e.message;
       aiNote = `AI review failed, ${policy.review.fail_closed ? 'blocking (fail_closed)' : 'skipped'}: ${e.message.slice(0, 200)}`;
