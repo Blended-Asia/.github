@@ -104,3 +104,16 @@ test('self-hosted safe: harness code is moved into a clean $RUNNER_TEMP/harness 
   assert.ok(moves.length >= 5);
   for (const [where, run] of moves) assert.equal(run, 'rm -rf "$RUNNER_TEMP/harness" && mv .harness "$RUNNER_TEMP/harness"', where);
 });
+
+test('caller templates never use `secrets: inherit` and pass only secrets the reusable workflow declares', () => {
+  for (const f of files.filter((x) => x.startsWith('workflow-templates/'))) {
+    const wf = loadYaml(path.join(ROOT, f));
+    for (const [id, job] of Object.entries(wf.jobs ?? {})) {
+      assert.notEqual(job.secrets, 'inherit', `${f} › ${id}`);
+      if (!job.secrets || !job.uses) continue;
+      const callee = loadYaml(path.join(ROOT, '.github/workflows', path.basename(job.uses.split('@')[0])));
+      const declared = Object.keys((callee.on ?? callee.true).workflow_call.secrets ?? {}); // Ruby YAML reads `on:` as true
+      for (const k of Object.keys(job.secrets)) assert.ok(declared.includes(k), `${f} › ${id} passes undeclared secret ${k}`);
+    }
+  }
+});

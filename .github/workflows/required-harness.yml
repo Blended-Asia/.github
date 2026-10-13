@@ -29,4 +29,7 @@ jobs:
     uses: Blended-Asia/.github/.github/workflows/harness.yml@v1
     with:
       results: ${{ toJSON(needs) }}
-    secrets: inherit
+    secrets:
+      HARNESS_APP_PRIVATE_KEY: ${{ secrets.HARNESS_APP_PRIVATE_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
