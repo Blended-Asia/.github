@@ -272,4 +272,20 @@ jobs:
           for c in $CONFIGS; do args+=(--config "$c"); done
           # On PRs: only fail on findings new relative to base; existing debt doesn't have to be fixed
           [ -n "$BASE_SHA" ] && args+=(--baseline-commit "$BASE_SHA")
-          pipx run --spec "semgrep==${SEMGREP_VERSION}" semgrep "${args[@]}"
+          out="$RUNNER_TEMP/semgrep.json"
+          rc=0
+          pipx run --spec "semgrep==${SEMGREP_VERSION}" semgrep "${args[@]}" --json-output="$out" || rc=$?
+          # Turn findings into annotations so the gate's PR comment shows file:line and the rule
+          [ -f "$out" ] && OUT="$out" python3 - <<'PY'
+          # ---- semgrep-annotations:begin ----
+          import json, os
+          data = json.load(open(os.environ["OUT"], encoding="utf-8"))
+          esc = lambda s: str(s).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          for r in data.get("results", []):
+              extra = r.get("extra", {})
+              level = "error" if extra.get("severity") == "ERROR" else "warning"
+              msg = " ".join(str(extra.get("message", "")).split())[:300]
+              print(f"::{level} file={esc(r.get('path', ''))},line={r.get('start', {}).get('line', 0)},title=semgrep {esc(r.get('check_id', ''))}::{esc(msg)}")
+          # ---- semgrep-annotations:end ----
+          PY
+          exit "$rc"

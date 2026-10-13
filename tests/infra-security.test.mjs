@@ -231,3 +231,18 @@ test('full-history secret scan: verified → error + exit 1, unverified → warn
   assert.equal(ifOf('TruffleHog full history'), "if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'");
   assert.equal(ifOf('TruffleHog (verified + unknown secrets)'), "if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'");
 });
+
+test('semgrep findings become annotations with file:line and rule id', () => {
+  const py = between(wf('security.yml'), 'semgrep-annotations');
+  const dir = mkdtempSync(path.join(tmpdir(), 'sg-'));
+  const out = path.join(dir, 'semgrep.json');
+  writeFileSync(out, JSON.stringify({ results: [
+    { check_id: 'yaml.github-actions.security.secrets-inherit.secrets-inherit', path: '.github/workflows/org-harness.yml', start: { line: 44 },
+      extra: { severity: 'ERROR', message: 'This workflow uses `secrets: inherit`\n  to pass all secrets.' } },
+    { check_id: 'js.audit.x', path: 'src/a.ts', start: { line: 3 }, extra: { severity: 'WARNING', message: '100% risky' } },
+  ] }));
+  const r = spawnSync('python3', ['-c', py], { encoding: 'utf8', env: { ...process.env, OUT: out } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^::error file=\.github\/workflows\/org-harness\.yml,line=44,title=semgrep yaml\.github-actions\.security\.secrets-inherit\.secrets-inherit::This workflow uses `secrets: inherit` to pass all secrets\.$/m);
+  assert.match(r.stdout, /^::warning file=src\/a\.ts,line=3,title=semgrep js\.audit\.x::100%25 risky$/m);
+});
