@@ -34,6 +34,7 @@ export function config(env = process.env) {
     owners: env.PLATFORM_OWNERS || '',
     outDir: env.OUT_DIR || '.',
     minutesDays: Number(env.MINUTES_DAYS || 7),
+    kind: env.ADOPT_KIND === 'new' ? 'new' : 'existing', // new repo: enforce from day one; existing: observe first
     quiet: env.QUIET === 'true', // the repo running the audit is public → don't print repo names to the log
   };
 }
@@ -58,7 +59,9 @@ export function client(cfg) {
       err.status = res.status;
       throw err;
     }
-    return { status: res.status, data: res.status === 204 ? null : await res.json(), res };
+    // Some endpoints answer 201/204 with an empty body (e.g. creating a repo variable)
+    const text = res.status === 204 ? '' : await res.text();
+    return { status: res.status, data: text ? JSON.parse(text) : null, res };
   }
   return {
     req,
@@ -447,6 +450,15 @@ async function template(cfg, file, branch) {
     .replace(/(\/\.github\/workflows\/[\w-]+\.yml)@v1\b/g, `$1@${cfg.ref}`);
 }
 
+/** New repos have no debt: enforce from day one and require every touched file to be clean. */
+export function starterForNewRepo(text) {
+  const out = text
+    .replace(/^enforcement: observe$/m, 'enforcement: enforce')
+    .replace(/^convention:\n  scope: changed[^\n]*\n/m, 'convention:\n  scope: changed            # changed | all\n  granularity: file         # new code: every file a PR touches must be fully clean\n');
+  if (!/^enforcement: enforce$/m.test(out) || !/granularity: file/.test(out)) throw new Error('starter harness.yml changed: update starterForNewRepo');
+  return out;
+}
+
 export async function planFixes(cfg, r, repo) {
   const out = [];
   const bumpRef = (text) => text.replace(
@@ -473,6 +485,7 @@ export async function planFixes(cfg, r, repo) {
     if (r.branch !== (r.defaultBranch ?? repo.default_branch)) {
       starter = starter.replace(/# gate:\n#   branches: \[develop\]\n/, `gate:\n  branches: [${JSON.stringify(r.branch)}]\n`);
     }
+    if (cfg.kind === 'new') starter = starterForNewRepo(starter);
     out.push({ path: '.github/harness.yml', content: starter, message: 'ci: add harness config' });
   }
   if (r.checks.hooks === 'fail') {
@@ -514,7 +527,10 @@ export async function openFixPr(gh, cfg, repo, files, target = repo.default_bran
     ...files.map((f) => `- \`${f.path}\` — ${f.message}`),
     '',
     'This PR was opened automatically by org-audit.',
-    ...(files.some((f) => f.path === '.github/harness.yml') ? [
+    ...(files.some((f) => f.path === '.github/harness.yml') && cfg.kind === 'new' ? [
+      '',
+      'This is a **new repo**: the harness is enforced from day one (`enforcement: enforce`, `convention.granularity: file`). Low-risk PRs are approved and auto-merged by the bot.',
+    ] : files.some((f) => f.path === '.github/harness.yml') ? [
       '',
       'After merge, the repo is in **observe mode** (`enforcement: observe`): the harness comments "would block because…" but does not block merging.',
       'For repos with an existing codebase, follow `docs/onboarding-existing-repo.md` in the `.github` repo (measure debt, write ARCHITECTURE.md, tune rules) before switching to `enforce`.',

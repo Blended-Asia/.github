@@ -326,3 +326,12 @@ test('git-flow: gate.branches in harness.yml decides the working branch (takes p
   const { results } = await main(env());
   assert.equal(byName(results).rel.branch, 'next');
 });
+
+test('client: empty 201/204 bodies are accepted (e.g. creating a repo variable)', async () => {
+  const { client } = await import('../scripts/org-audit.mjs');
+  routes.unshift(['POST', /\/actions\/variables$/, () => [201, null]]);
+  const gh = client({ api: 'https://api.github.com', token: 't' });
+  const r = await gh.req('POST', '/repos/acme/x/actions/variables', { name: 'A', value: 'b' });
+  assert.equal(r.status, 201);
+  assert.equal(r.data, null);
+});
