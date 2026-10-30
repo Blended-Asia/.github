@@ -14,7 +14,7 @@ The harness has two parts:
 - **Gate** (`harness.yml` → `scripts/harness/verdict.mjs`): aggregates the results of every job in the run.
   - Not passing: sticky comment + red `harness / gate` check.
   - Passing: the bot approves if risk is low, then enables native auto-merge.
-  - AI review (OpenAI or Claude, per `review.provider`) is optional and **can only block**.
+  - AI review (Claude or OpenAI, per `review.provider`; subscription token via the vendor CLI or API key, per `review.auth`) is optional and **can only block**.
 
 Language: everything in this repo is **English** — code, comments, docs, commit messages, and the text the bot posts on PRs. The AI review language is configurable via `review.language` (default `en`).
 

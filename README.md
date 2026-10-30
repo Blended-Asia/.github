@@ -128,6 +128,10 @@ Auto-merge uses GitHub's native feature, so GitHub always waits for **every** re
   - `token`: a Claude Pro/Max/Team subscription token (`claude setup-token`, valid 1 year) stored as `CLAUDE_CODE_OAUTH_TOKEN`. Subscription tokens only work through Claude Code, so the gate runs the pinned Claude Code CLI headless (`review.claude_code_version`) in an empty sandbox: all tools disabled, no settings/MCP/CLAUDE.md, and no GitHub token in its environment. Usage counts against the subscription's limits.
   - `api_key`: `ANTHROPIC_API_KEY`, calling the Messages API directly (pay per use).
   - `auto` (default): the token first; if it fails (rate limit, expiry) the API key is used as a fallback. The gate's comment says which one ran.
+- OpenAI credentials (`review.provider: openai`, same `review.auth` modes):
+  - `token`: a ChatGPT Business/Enterprise **Codex access token** (ChatGPT admin console → Access tokens, finite lifetime of up to 90 days: create a new one before it expires) stored as `CODEX_ACCESS_TOKEN`. The gate runs the pinned Codex CLI headless (`review.codex_version`, `codex exec`): read-only sandbox, every tool feature and web search disabled, empty work dir and `CODEX_HOME`, no user config/rules/AGENTS.md, nothing persisted, no GitHub token or API key in its environment. The token is passed as an environment variable for that run only, so no credential file is written. If the event stream shows any tool call, the result is discarded. An empty `review.model` uses the plan's default model. Usage counts against the workspace member's Codex limits.
+  - `api_key`: `OPENAI_API_KEY`, calling Chat Completions directly (pay per use).
+  - `auto` (default): the token first, the API key as a fallback. Repos that only set `OPENAI_API_KEY` keep working unchanged.
 - `review.language` sets the language of AI comments (default `en`).
 
 ## Your GitHub plan determines how strictly this can be enforced
@@ -159,7 +163,7 @@ Only Enterprise can lock this down completely, using `required-*.yml` + `ruleset
    git tag v1 && git push origin v1
    ```
 2. **Org secrets/variables** for the harness:
-   - AI review secrets (only if enabled): `CLAUDE_CODE_OAUTH_TOKEN` and/or `ANTHROPIC_API_KEY` (Claude, default), or `OPENAI_API_KEY` with `review.provider: openai`.
+   - AI review secrets (only if enabled): `CLAUDE_CODE_OAUTH_TOKEN` and/or `ANTHROPIC_API_KEY` (Claude, default), or `CODEX_ACCESS_TOKEN` and/or `OPENAI_API_KEY` with `review.provider: openai`. Prefer org secrets with `--visibility selected` (only adopted repos): anyone with write access to a repo that can see the secret can read it from a workflow.
    - **GitHub App "harness bot"** (recommended), permissions Contents R/W + Pull requests R/W, installed on all repos. Store variable `HARNESS_APP_CLIENT_ID` and secret `HARNESS_APP_PRIVATE_KEY`.
      - Why: merges performed with GITHUB_TOKEN **do not trigger workflows** on `main`. Vercel/Supabase integrations are unaffected, but deploys via GitHub Actions are.
      - Without an App, the harness uses GITHUB_TOKEN. For the bot to approve, enable Org settings → Actions → "Allow GitHub Actions to create and approve pull requests".

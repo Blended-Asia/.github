@@ -118,6 +118,21 @@ test('caller templates never use `secrets: inherit` and pass only secrets the re
   }
 });
 
+test('every AI secret the gate reads is declared, passed to the Verdict step, and forwarded by the caller template', async () => {
+  const { API_KEY_ENV, TOKEN_ENV } = await import('../scripts/harness/verdict.mjs');
+  const names = [...new Set([...Object.values(API_KEY_ENV), ...Object.values(TOKEN_ENV)])];
+  assert.ok(names.includes('CODEX_ACCESS_TOKEN') && names.includes('CLAUDE_CODE_OAUTH_TOKEN'));
+  const gate = loadYaml(path.join(ROOT, '.github/workflows/harness.yml'));
+  const declared = Object.keys((gate.on ?? gate.true).workflow_call.secrets ?? {});
+  const verdict = Object.values(gate.jobs).flatMap((j) => j.steps ?? []).find((st) => st.name === 'Verdict');
+  const caller = loadYaml(path.join(ROOT, 'workflow-templates/org-harness.yml')).jobs.harness.secrets;
+  for (const n of names) {
+    assert.ok(declared.includes(n), `harness.yml declares ${n}`);
+    assert.equal(verdict.env[n], `\${{ secrets.${n} }}`, `Verdict step gets ${n}`);
+    assert.equal(caller[n], `\${{ secrets.${n} }}`, `caller template forwards ${n}`);
+  }
+});
+
 test('self-hosted safe: fixed-name dirs under $RUNNER_TEMP are cleared before use', () => {
   const text = ['security.yml', 'infra.yml'].map((f) => [f, readFileSync(path.join(ROOT, '.github/workflows', f), 'utf8')]);
   for (const [f, t] of text) {

@@ -3,7 +3,7 @@
 //   Pass   → summary comment; if low-risk the bot approves; enable auto-merge (GitHub merges once requirements are met).
 // The AI can only BLOCK. Approval is decided by fixed policy (size, sensitive paths, author).
 import path from 'node:path';
-import { readFileSync, existsSync, mkdtempSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -141,7 +141,7 @@ export function trimDiff(diff, excludeRes, maxChars) {
   return { text, truncated };
 }
 
-export async function aiReview({ fetchImpl, apiKey, oauthToken, runClaude = runClaudeCode, policy, pr, diff, guidelines, findings }) {
+export async function aiReview({ fetchImpl, apiKey, oauthToken, codexToken, runClaude = runClaudeCode, runCodex = runCodexCli, policy, pr, diff, guidelines, findings }) {
   const lang = { vi: 'Vietnamese', en: 'English' }[policy.review.language] ?? policy.review.language ?? 'English';
   const system = [
     'You are a senior code reviewer acting as a merge gate for a pull request.',
@@ -168,20 +168,26 @@ export async function aiReview({ fetchImpl, apiKey, oauthToken, runClaude = runC
   const model = policy.review.model || DEFAULT_MODELS[provider];
   let out;
   let via = provider === 'anthropic' ? 'Anthropic API key' : 'OpenAI API key';
-  // Anthropic: a Claude subscription token (`claude setup-token`) only works through Claude Code, so it runs the CLI
-  // headless; an API key calls the Messages API directly. auth: auto = token first, API key as fallback.
-  const auth = provider === 'anthropic' ? (policy.review.auth || 'auto') : 'api_key';
+  // Subscription tokens only work through the vendor CLI, so the gate runs it headless:
+  //   anthropic: Claude subscription token (`claude setup-token`) → Claude Code
+  //   openai:    ChatGPT Business/Enterprise access token (CODEX_ACCESS_TOKEN) → Codex CLI
+  // An API key calls the vendor API directly. auth: auto = token first, API key as fallback.
+  const auth = policy.review.auth || 'auto';
   if (!['auto', 'token', 'api_key'].includes(auth)) throw new Error(`review.auth must be auto|token|api_key (got ${auth})`);
-  if (auth !== 'api_key' && oauthToken) {
+  const token = provider === 'anthropic' ? oauthToken : codexToken;
+  if (auth !== 'api_key' && token) {
+    const cli = provider === 'anthropic' ? 'Claude Code' : 'Codex CLI';
     try {
-      out = await runClaude({ token: oauthToken, model, system, user, schema: REVIEW_SCHEMA, version: policy.review.claude_code_version });
-      via = 'Claude Code (subscription token)';
+      out = provider === 'anthropic'
+        ? await runClaude({ token, model, system, user, schema: REVIEW_SCHEMA, version: policy.review.claude_code_version })
+        : await runCodex({ token, model: policy.review.model || '', system, user, schema: REVIEW_SCHEMA, version: policy.review.codex_version });
+      via = provider === 'anthropic' ? 'Claude Code (subscription token)' : 'Codex CLI (ChatGPT access token)';
     } catch (e) {
       if (auth === 'token' || !apiKey) throw e;
-      via = `Anthropic API key (fallback: Claude Code failed: ${e.message.slice(0, 120)})`;
+      via = `${provider === 'anthropic' ? 'Anthropic' : 'OpenAI'} API key (fallback: ${cli} failed: ${e.message.slice(0, 120)})`;
     }
   } else if (auth === 'token') {
-    throw new Error('review.auth is token but CLAUDE_CODE_OAUTH_TOKEN is missing');
+    throw new Error(`review.auth is token but ${TOKEN_ENV[provider]} is missing`);
   }
   if (!out) out = await call({ fetchImpl, apiKey, model, system, user });
   out.comments = (out.comments ?? []).filter((c) => SEVERITIES.includes(c.severity));
@@ -192,13 +198,13 @@ export async function aiReview({ fetchImpl, apiKey, oauthToken, runClaude = runC
 /** Which secret(s) let AI review run for this policy (null when nothing is missing). */
 export function missingAiSecret(policy, env) {
   const provider = policy.review?.provider || 'openai';
-  if (provider !== 'anthropic') return env[API_KEY_ENV[provider] ?? 'OPENAI_API_KEY'] ? null : (API_KEY_ENV[provider] ?? 'OPENAI_API_KEY');
+  const keyName = API_KEY_ENV[provider] ?? 'OPENAI_API_KEY';
+  const tokenName = TOKEN_ENV[provider];
+  if (!tokenName) return env[keyName] ? null : keyName;
   const auth = policy.review?.auth || 'auto';
-  const token = env.CLAUDE_CODE_OAUTH_TOKEN;
-  const key = env.ANTHROPIC_API_KEY;
-  if (auth === 'token') return token ? null : 'CLAUDE_CODE_OAUTH_TOKEN';
-  if (auth === 'api_key') return key ? null : 'ANTHROPIC_API_KEY';
-  return token || key ? null : 'CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY';
+  if (auth === 'token') return env[tokenName] ? null : tokenName;
+  if (auth === 'api_key') return env[keyName] ? null : keyName;
+  return env[tokenName] || env[keyName] ? null : `${tokenName} or ${keyName}`;
 }
 
 /**
@@ -227,15 +233,71 @@ export async function runClaudeCode({ token, model, system, user, schema, versio
 }
 
 export const CLAUDE_CODE_VERSION = '2.1.296';
+export const CODEX_VERSION = '0.166.0';
 
-async function ensureClaudeCli(version, { spawnImpl, env }) {
-  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`invalid claude_code_version: ${version}`);
-  const dir = path.join(env.RUNNER_TOOL_CACHE || tmpdir(), 'claude-code', version);
-  const bin = path.join(dir, 'node_modules', '.bin', 'claude');
+const ensureClaudeCli = (version, opts) => ensureCli({ name: 'Claude Code', dir: 'claude-code', pkg: '@anthropic-ai/claude-code', bin: 'claude', key: 'claude_code_version', version }, opts);
+
+/** Installs a pinned npm CLI once per version under the runner tool cache (pre-installed on the self-hosted runners). */
+async function ensureCli({ name, dir: sub, pkg, bin: binName, key, version }, { spawnImpl, env }) {
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`invalid ${key}: ${version}`);
+  const dir = path.join(env.RUNNER_TOOL_CACHE || tmpdir(), sub, version);
+  const bin = path.join(dir, 'node_modules', '.bin', binName);
   if (existsSync(bin)) return bin;
-  const r = await runProcess(spawnImpl, 'npm', ['install', '--prefix', dir, '--no-audit', '--no-fund', '--loglevel=error', `@anthropic-ai/claude-code@${version}`], { env, timeoutMs: 300000 });
-  if (r.code !== 0 || !existsSync(bin)) throw new Error(`could not install Claude Code ${version}: ${r.stderr.trim().slice(-200)}`);
+  const r = await runProcess(spawnImpl, 'npm', ['install', '--prefix', dir, '--no-audit', '--no-fund', '--loglevel=error', `${pkg}@${version}`], { env, timeoutMs: 300000 });
+  if (r.code !== 0 || !existsSync(bin)) throw new Error(`could not install ${name} ${version}: ${r.stderr.trim().slice(-200)}`);
   return bin;
+}
+
+// Codex features that give the model tools (shell, apps, plugins, browser…). All off: the review only reads its input.
+export const CODEX_DISABLED_FEATURES = ['shell_tool', 'unified_exec', 'shell_snapshot', 'apps', 'plugins', 'remote_plugin', 'hooks',
+  'multi_agent', 'image_generation', 'view_image', 'browser_use', 'browser_use_external', 'computer_use', 'skill_search',
+  'tool_suggest', 'sleep_tool', 'goals', 'memories'];
+// JSONL item types that are not tool calls. Anything else (command_execution, file_change, mcp_tool_call, web_search…)
+// means the model used a tool despite the flags above → the result is discarded.
+const CODEX_SAFE_ITEMS = ['agent_message', 'reasoning', 'todo_list', 'error'];
+
+/**
+ * Runs Codex CLI headless with a ChatGPT Business/Enterprise access token (CODEX_ACCESS_TOKEN: used for this run only,
+ * no credential file is written). Isolation: empty temp cwd and CODEX_HOME, no user config/rules/AGENTS.md, read-only
+ * sandbox, every tool feature and web search off, nothing persisted, minimal env (no GitHub tokens reach the child).
+ * PR content goes through stdin. If the event stream shows any tool call, the result is discarded.
+ */
+export async function runCodexCli({ token, model, system, user, schema, version, spawnImpl = spawn, env = process.env, timeoutMs = 600000 }) {
+  const ver = version || CODEX_VERSION;
+  const bin = env.CODEX_CLI || await ensureCli({ name: 'Codex CLI', dir: 'codex', pkg: '@openai/codex', bin: 'codex', key: 'codex_version', version: ver }, { spawnImpl, env });
+  const sandbox = mkdtempSync(path.join(tmpdir(), 'codex-review-'));
+  try {
+    const home = path.join(sandbox, 'home');
+    const work = path.join(sandbox, 'work');
+    mkdirSync(home);
+    mkdirSync(work);
+    const schemaPath = path.join(sandbox, 'schema.json');
+    const outPath = path.join(sandbox, 'out.json');
+    writeFileSync(schemaPath, JSON.stringify(schema));
+    const args = ['exec', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules',
+      '--sandbox', 'read-only', '--color', 'never', '--json', '-C', work,
+      '-c', 'approval_policy="never"', '-c', 'web_search="disabled"', '-c', 'project_doc_max_bytes=0',
+      '-c', `developer_instructions=${JSON.stringify(system)}`,
+      ...CODEX_DISABLED_FEATURES.flatMap((f) => ['--disable', f]),
+      '--output-schema', schemaPath, '-o', outPath, ...(model ? ['-m', model] : []), '-'];
+    const childEnv = { PATH: env.PATH ?? '', HOME: home, CODEX_HOME: home, CODEX_ACCESS_TOKEN: token };
+    const input = `Review the pull request below. Answer only with the structured output.\n\n${user}`;
+    const { code, stdout, stderr } = await runProcess(spawnImpl, bin, args, { cwd: work, env: childEnv, input, timeoutMs });
+    const events = stdout.split('\n').flatMap((l) => { try { return l.trim() ? [JSON.parse(l)] : []; } catch { return []; } });
+    const tool = events.find((e) => String(e.type).startsWith('item.') && e.item?.type && !CODEX_SAFE_ITEMS.includes(e.item.type));
+    if (tool) throw new Error(`Codex CLI used a tool (${tool.item.type}); result discarded`);
+    const failed = events.find((e) => e.type === 'turn.failed') ?? (code !== 0 ? events.findLast((e) => e.type === 'error') : null);
+    if (failed) throw new Error(`Codex CLI: ${String(failed.error?.message ?? failed.message ?? 'error').slice(0, 200)}`);
+    if (code !== 0) throw new Error(`Codex CLI exited ${code}: ${(stderr || stdout).trim().slice(-200)}`);
+    if (!existsSync(outPath)) throw new Error('Codex CLI: no final message');
+    try {
+      return JSON.parse(readFileSync(outPath, 'utf8'));
+    } catch {
+      throw new Error('Codex CLI: final message is not JSON');
+    }
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
 }
 
 function runProcess(spawnImpl, cmd, args, { cwd, env, input, timeoutMs }) {
@@ -254,6 +316,7 @@ function runProcess(spawnImpl, cmd, args, { cwd, env, input, timeoutMs }) {
 
 export const DEFAULT_MODELS = { openai: 'gpt-5', anthropic: 'claude-sonnet-5-5' };
 export const API_KEY_ENV = { openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY' };
+export const TOKEN_ENV = { openai: 'CODEX_ACCESS_TOKEN', anthropic: 'CLAUDE_CODE_OAUTH_TOKEN' };
 
 const PROVIDERS = {
   // Chat Completions + Structured Outputs (strict): every schema object must have additionalProperties:false and all fields required
@@ -343,7 +406,7 @@ export function renderReport(r) {
 }
 
 // ---------- Main ----------
-export async function main(env = process.env, { fetchImpl = globalThis.fetch, runClaude } = {}) {
+export async function main(env = process.env, { fetchImpl = globalThis.fetch, runClaude, runCodex } = {}) {
   const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'));
   const [owner, repo] = env.GITHUB_REPOSITORY.split('/');
   const api = env.GITHUB_API_URL || 'https://api.github.com';
@@ -454,7 +517,7 @@ export async function main(env = process.env, { fetchImpl = globalThis.fetch, ru
         ? (configRef ? showAt(configRef, gpath, repoDir) : readText(path.join(repoDir, gpath)))
         : null;
       ai = await aiReview({
-        fetchImpl, apiKey: aiKey, oauthToken: env.CLAUDE_CODE_OAUTH_TOKEN, runClaude, policy, pr, diff: text,
+        fetchImpl, apiKey: aiKey, oauthToken: env.CLAUDE_CODE_OAUTH_TOKEN, codexToken: env.CODEX_ACCESS_TOKEN, runClaude, runCodex, policy, pr, diff: text,
         guidelines: gfile ? gfile.slice(0, 30000) : null,
         findings: [...failedJobs.flatMap((j) => j.findings), ...warnings],
       });

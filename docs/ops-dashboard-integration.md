@@ -74,7 +74,7 @@ Flow:
 Turning a repo's harness off entirely, editing rules (`architecture.*`, `human_required_paths`) and anything about secrets are **out of scope**: link to the repo instead. Security rules cannot be disabled from `harness.yml` anyway.
 
 ### 4. Secrets for AI review
-The dashboard does not read or write secrets. It shows which auth the last AI review used, parsed from the gate comment line `AI review via …`. Setting `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` stays a platform task (`gh secret set`).
+The dashboard does not read or write secrets. It shows which auth the last AI review used, parsed from the gate comment line `AI review via …`. Setting `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` / `CODEX_ACCESS_TOKEN` / `OPENAI_API_KEY` stays a platform task (`gh secret set`).
 
 ## Data model suggestion
 `harness_snapshots` (one row per product repo, server-written, same access rules as `repo_snapshots`): `lifecycle_state`, `registry_entry jsonb`, `registry_pr_url`, `adoption_pr_url`, `adoption_pr_state`, `config jsonb` (parsed `harness.yml`), `enforcement`, `ai_enabled`, `ai_auth`, `protected bool`, `gate_conclusion`, `open_settings_pr_urls text[]`, `synced_at`. Record every PR the dashboard opens in the existing audit/`sync_runs` log, with the user who requested it.

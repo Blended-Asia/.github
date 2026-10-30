@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { main, commentableLines, trimDiff, REPORT_MARKER, APPROVE_MARKER, REVIEW_SCHEMA, DEFAULT_MODELS, runClaudeCode } from '../scripts/harness/verdict.mjs';
+import { main, commentableLines, trimDiff, REPORT_MARKER, APPROVE_MARKER, REVIEW_SCHEMA, DEFAULT_MODELS, runClaudeCode, runCodexCli, CODEX_DISABLED_FEATURES } from '../scripts/harness/verdict.mjs';
 import { globToRegExp } from '../scripts/harness/lib.mjs';
 import { ROOT, gitRepo } from './helpers.mjs';
 
@@ -283,7 +283,7 @@ test('AI: override label skips blockers; API errors do not block unless fail_clo
   const e2 = await setup({ harnessYml: 'review:\n  ai: true\n  provider: openai\n  fail_closed: true\n', ai: new Error('x') }).run();
   assert.equal(e2.blocked, true);
   const noKey = await setup({ harnessYml: 'review:\n  ai: true\n  provider: openai\n' }).run({ OPENAI_API_KEY: '' });
-  assert.match(noKey.aiNote, /secret OPENAI_API_KEY is missing/);
+  assert.match(noKey.aiNote, /secret CODEX_ACCESS_TOKEN or OPENAI_API_KEY is missing/);
   const noKeyA = await setup({ harnessYml: 'review:\n  ai: true\n  provider: anthropic\n' }).run({ ANTHROPIC_API_KEY: '' });
   assert.match(noKeyA.aiNote, /secret CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY is missing/);
 });
@@ -574,4 +574,94 @@ test('runClaudeCode: isolated headless run (no tools, empty cwd/HOME, no GitHub 
     spawnImpl: fake({ type: 'result', subtype: 'error_during_execution', is_error: true, api_error_status: 429, result: 'limit' }) }), /HTTP 429/);
   await assert.rejects(runClaudeCode({ token: 'oat', model: 'm', system: 's', user: 'u', schema: REVIEW_SCHEMA, env,
     spawnImpl: fake({ type: 'result', subtype: 'success', is_error: false }) }), /no structured_output/);
+});
+
+test('AI auth (openai): auto = ChatGPT access token via Codex CLI first, API key as fallback; token / api_key modes', async () => {
+  const yml = (auth, extra = '') => `review:\n  ai: true\n  provider: openai\n${auth ? `  auth: ${auth}\n` : ''}${extra}`;
+  const ok = { verdict: 'approve', summary: 'ok', comments: [] };
+  const seen = [];
+  const good = async (args) => { seen.push(args); return ok; };
+  const bad = async () => { throw new Error('usage limit reached'); };
+  const t1 = setup({ harnessYml: yml() });
+  const r1 = await t1.run({ CODEX_ACCESS_TOKEN: 'cat', OPENAI_API_KEY: '' }, { runCodex: good });
+  assert.match(r1.aiNote, /via Codex CLI \(ChatGPT access token\)/);
+  assert.equal(seen[0].token, 'cat');
+  assert.equal(seen[0].model, '', 'no model set → the default model of the ChatGPT plan');
+  assert.equal(seen[0].version, '0.166.0', 'pinned version from profiles/base.yml');
+  assert.deepEqual(seen[0].schema, REVIEW_SCHEMA);
+  assert.match(seen[0].system, /UNTRUSTED DATA/);
+  assert.ok(!t1.calls.some((c) => c.url.includes('api.openai.com')), 'token path does not call the API directly');
+  await setup({ harnessYml: yml('', '  model: gpt-5.5\n') }).run({ CODEX_ACCESS_TOKEN: 'cat' }, { runCodex: good });
+  assert.equal(seen[1].model, 'gpt-5.5');
+  const t2 = setup({ harnessYml: yml() });
+  const r2 = await t2.run({ CODEX_ACCESS_TOKEN: 'cat' }, { runCodex: bad });
+  assert.match(r2.aiNote, /via OpenAI API key \(fallback: Codex CLI failed: usage limit reached/);
+  assert.ok(t2.calls.some((c) => c.url === 'https://api.openai.com/v1/chat/completions'));
+  const r3 = await setup({ harnessYml: yml('token') }).run({ CODEX_ACCESS_TOKEN: 'cat' }, { runCodex: bad });
+  assert.match(r3.aiNote, /AI review failed, skipped: usage limit reached/, 'token mode never falls back');
+  assert.equal(r3.botApprove, false);
+  const r4 = await setup({ harnessYml: yml('api_key') }).run({ CODEX_ACCESS_TOKEN: 'cat' }, { runCodex: good });
+  assert.match(r4.aiNote, /via OpenAI API key\./);
+  assert.equal(seen.length, 2, 'api_key mode never runs the CLI');
+  const r5 = await setup({ harnessYml: yml('token') }).run({ CODEX_ACCESS_TOKEN: '' });
+  assert.match(r5.aiNote, /secret CODEX_ACCESS_TOKEN is missing/);
+  const r6 = await setup({ harnessYml: yml() }).run({ CODEX_ACCESS_TOKEN: '', OPENAI_API_KEY: '' });
+  assert.match(r6.aiNote, /secret CODEX_ACCESS_TOKEN or OPENAI_API_KEY is missing/);
+  const r7 = await setup({ harnessYml: yml() }).run({ CODEX_ACCESS_TOKEN: '' });
+  assert.match(r7.aiNote, /via OpenAI API key\./, 'auto without a token uses the key directly (repos that only set OPENAI_API_KEY keep working)');
+});
+
+test('runCodexCli: isolated headless run (no tools, empty cwd/CODEX_HOME, no GitHub tokens in env), discards tool use', async () => {
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough } = await import('node:stream');
+  const fake = (events, { final = { verdict: 'request_changes', summary: 's', comments: [] }, code = 0 } = {}) => (cmd, args, opts) => {
+    fake.last = { cmd, args, opts, input: '' };
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new PassThrough();
+    child.stdin.on('data', (d) => { fake.last.input += d; });
+    child.kill = () => {};
+    setImmediate(() => {
+      if (final) writeFileSync(args[args.indexOf('-o') + 1], typeof final === 'string' ? final : JSON.stringify(final));
+      child.stdout.end(events.map((e) => JSON.stringify(e)).join('\n'));
+      child.stderr.end();
+      child.emit('close', code);
+    });
+    return child;
+  };
+  const env = { CODEX_CLI: '/opt/codex', PATH: '/usr/bin', GITHUB_TOKEN: 'ghs_secret', HARNESS_WRITE_TOKEN: 'ghs_write', OPENAI_API_KEY: 'sk-x' };
+  const msg = [{ type: 'thread.started' }, { type: 'item.completed', item: { type: 'reasoning' } }, { type: 'item.completed', item: { type: 'agent_message' } }, { type: 'turn.completed' }];
+  const out = await runCodexCli({ token: 'cat', model: '', system: 'sys "quoted"', user: '<diff>x</diff>', schema: REVIEW_SCHEMA, spawnImpl: fake(msg), env });
+  assert.equal(out.verdict, 'request_changes');
+  const { cmd, args, opts, input } = fake.last;
+  assert.equal(cmd, '/opt/codex');
+  assert.equal(args[0], 'exec');
+  for (const f of ['--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--json']) assert.ok(args.includes(f), f);
+  assert.equal(args[args.indexOf('--sandbox') + 1], 'read-only');
+  for (const c of ['approval_policy="never"', 'web_search="disabled"', 'project_doc_max_bytes=0', 'developer_instructions="sys \\"quoted\\""']) assert.ok(args.includes(c), c);
+  const disabled = args.flatMap((a, i) => (a === '--disable' ? [args[i + 1]] : []));
+  assert.deepEqual(disabled, CODEX_DISABLED_FEATURES);
+  for (const f of ['shell_tool', 'unified_exec', 'apps', 'plugins', 'browser_use', 'computer_use']) assert.ok(disabled.includes(f), `${f} disabled`);
+  assert.ok(!args.includes('-m'), 'no model flag when none is configured');
+  assert.equal(args.at(-1), '-', 'prompt from stdin');
+  assert.match(input, /<diff>x<\/diff>$/, 'untrusted PR content goes through stdin, not argv');
+  assert.ok(!args.some((a) => a.includes('<diff>')));
+  assert.deepEqual(Object.keys(opts.env).sort(), ['CODEX_ACCESS_TOKEN', 'CODEX_HOME', 'HOME', 'PATH']);
+  assert.equal(opts.env.HOME, opts.env.CODEX_HOME);
+  assert.equal(args[args.indexOf('-C') + 1], opts.cwd, 'empty work dir');
+  assert.ok(!JSON.stringify(opts.env).includes('ghs_') && !JSON.stringify(opts.env).includes('sk-x'), 'no GitHub token or API key reaches Codex');
+  assert.equal(existsSync(opts.env.CODEX_HOME), false, 'sandbox removed after the run');
+  await runCodexCli({ token: 'cat', model: 'gpt-5.5', system: 's', user: 'u', schema: REVIEW_SCHEMA, spawnImpl: fake(msg), env });
+  assert.equal(fake.last.args[fake.last.args.indexOf('-m') + 1], 'gpt-5.5');
+  for (const type of ['command_execution', 'file_change', 'mcp_tool_call', 'web_search']) {
+    await assert.rejects(runCodexCli({ token: 'cat', model: '', system: 's', user: 'u', schema: REVIEW_SCHEMA, env,
+      spawnImpl: fake([{ type: 'item.started', item: { type } }, ...msg]) }), /used a tool .*result discarded/, type);
+  }
+  await assert.rejects(runCodexCli({ token: 'cat', model: '', system: 's', user: 'u', schema: REVIEW_SCHEMA, env,
+    spawnImpl: fake([{ type: 'turn.failed', error: { message: '401 Unauthorized' } }], { final: null, code: 1 }) }), /Codex CLI: 401 Unauthorized/);
+  await assert.rejects(runCodexCli({ token: 'cat', model: '', system: 's', user: 'u', schema: REVIEW_SCHEMA, env,
+    spawnImpl: fake(msg, { final: 'not json' }) }), /not JSON/);
+  await assert.rejects(runCodexCli({ token: 'cat', model: '', system: 's', user: 'u', schema: REVIEW_SCHEMA, env,
+    spawnImpl: fake(msg, { final: null }) }), /no final message/);
 });

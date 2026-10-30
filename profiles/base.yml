@@ -13,18 +13,21 @@ convention:
 
 review:
   ai: false                 # true: enable AI review (secrets: see provider/auth below)
-  provider: anthropic       # anthropic (Claude) | openai (Chat Completions + Structured Outputs, needs OPENAI_API_KEY)
-  auth: auto                # anthropic only. token: Claude subscription token (CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`),
-                            #   run through Claude Code headless · api_key: ANTHROPIC_API_KEY, Messages API directly
-                            #   · auto: token first, API key as fallback (e.g. subscription rate-limited)
-  claude_code_version: "2.1.296"   # pinned Claude Code CLI used with the subscription token
+  provider: anthropic       # anthropic (Claude) | openai (ChatGPT / OpenAI)
+  auth: auto                # token: subscription token, run through the vendor CLI headless (tools off, empty sandbox)
+                            #   - anthropic: CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`) → Claude Code
+                            #   - openai: CODEX_ACCESS_TOKEN (ChatGPT Business/Enterprise access token) → Codex CLI
+                            # api_key: ANTHROPIC_API_KEY (Messages API) / OPENAI_API_KEY (Chat Completions) directly
+                            # auto: token first, API key as fallback (e.g. subscription rate-limited or token expired)
+  claude_code_version: "2.1.296"   # pinned Claude Code CLI used with the Claude subscription token
+  codex_version: "0.166.0"         # pinned Codex CLI used with the ChatGPT access token
   diff_exclude:             # excluded from the diff sent to the AI (noisy, costs tokens). Lockfiles always require a human reviewer anyway.
     - "**/package-lock.json"
     - "**/pnpm-lock.yaml"
     - "**/yarn.lock"
     - "**/bun.lock"
     - "**/Gemfile.lock"
-  model: ""                 # empty = provider default (DEFAULT_MODELS in scripts/harness/verdict.mjs)
+  model: ""                 # empty = provider default (DEFAULT_MODELS in scripts/harness/verdict.mjs; Codex CLI: the ChatGPT plan default)
   language: en              # language the AI writes review comments in
   block_on: [critical, major]
   guidelines: ARCHITECTURE.md   # architecture doc the AI checks against (if present)
