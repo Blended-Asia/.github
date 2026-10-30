@@ -56,6 +56,8 @@ test('defaults are readable from the workflow', () => {
   assert.equal(DEFAULTS.title_max_length, 72);
   assert.equal(DEFAULTS.size_mode, 'warn');
   assert.ok(new RegExp(DEFAULTS.branch_pattern).test('fix/abc-1'));
+  assert.ok(new RegExp(DEFAULTS.branch_pattern).test('feature/feedback-20261007'), 'git-flow style feature/ branches are accepted');
+  assert.ok(!new RegExp(DEFAULTS.branch_pattern).test('my-branch'));
 });
 
 test('compliant PR: passes, no comment, labeled size/XS', async () => {

@@ -23,7 +23,7 @@ on:
       branch_pattern:
         description: Regex for the source branch name; empty = not checked
         type: string
-        default: '^(feat|fix|chore|docs|refactor|perf|test|build|ci|hotfix|release|revert)/[a-z0-9._-]+$'
+        default: '^(feat|feature|fix|chore|docs|refactor|perf|test|build|ci|hotfix|release|revert)/[a-z0-9._-]+$'
       ticket_pattern:
         description: "Ticket ID regex (e.g. Backlog/Jira: '[A-Z][A-Z0-9_]+-[0-9]+'); empty = not required"
         type: string
