@@ -32,7 +32,7 @@ Templates are not per repo but per **stack profile**. A repo only declares which
 | Profile | Detection | Tools | Default architecture rules |
 |---|---|---|---|
 | `rails` | Gemfile contains `rails` | RuboCop (repo config), Brakeman (blocks from Medium confidence), Packwerk if `packwerk.yml` exists | models don't use params/session/render · views don't query the DB · controllers don't use raw SQL · migrations don't call app models · disabling CSRF requires review |
-| `react` | package.json has react/next | ESLint (repo config), `tsc --noEmit`, Prettier (if the repo uses it), dependency-cruiser: import cycles, devDependency imports in production code, unresolvable imports | client components don't read server env / service role / import server code · `components/` doesn't import from `app/`/`pages/` · warns on `dangerouslySetInnerHTML`, `@ts-ignore` |
+| `react` | package.json has react/next | ESLint (repo config), `tsc --noEmit`, Prettier (if the repo uses it), dependency-cruiser: import cycles (cycles through `import type` are ignored), devDependency imports in production code, unresolvable imports | client components don't read server env / service role / import server code · `components/` doesn't import from `app/`/`pages/` · warns on `dangerouslySetInnerHTML`, `@ts-ignore` |
 | `node` | other package.json | same as `react` | no string concatenation into SQL · warns on `console.log` |
 
 - `profiles/<stack>.yml` holds the org's default tools and rules. Changes here apply to every repo on that stack.

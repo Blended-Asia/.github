@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { globToRegExp, deepMerge, annotation } from '../scripts/harness/lib.mjs';
 import { detectProfiles, resolveConfig } from '../scripts/harness/config.mjs';
 import { scan } from '../scripts/harness/rules.mjs';
@@ -287,4 +288,12 @@ test('onlyAddedLines: keeps only problems on lines the PR added/modified; keeps 
   assert.deepEqual(kept, [{ file: 'a.ts', line: 3 }, { file: 'a.ts' }]);
   assert.equal(dropped, 2);
   assert.equal(onlyAddedLines(f, null).kept.length, 4, 'no base → keep everything');
+});
+
+test('starter depcruise config: no-circular ignores cycles through type-only imports', () => {
+  const cfg = createRequire(import.meta.url)(path.join(ROOT, 'profiles/starter/react/.dependency-cruiser.cjs'));
+  const rule = cfg.forbidden.find((r) => r.name === 'no-circular');
+  assert.equal(rule.severity, 'error');
+  assert.equal(rule.to.circular, true);
+  assert.deepEqual(rule.to.viaOnly, { dependencyTypesNot: ['type-only'] });
 });

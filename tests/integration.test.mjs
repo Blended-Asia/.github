@@ -48,6 +48,9 @@ test('react: ESLint + tsc + Prettier + dependency-cruiser on a real Next.js app'
     'web/components/Button.tsx': 'export function Button() { return <button>x</button> }\n',
     'web/lib/b.ts': "import { c } from './c';\nexport const b = () => c;\n",
     'web/lib/c.ts': "import { b } from './b';\nexport const c = () => b;\n",
+    // cycle that only exists through a type-only import: erased at build time → not reported
+    'web/lib/t1.ts': "import type { T2 } from './t2';\nexport type T1 = { t2?: T2 };\nexport const one = 1;\n",
+    'web/lib/t2.ts': "import { one } from './t1';\nexport type T2 = number;\nexport const two = one + 1;\n",
     // rename an exported function → app/about/page.tsx (unchanged) breaks type-checking
     'web/lib/util.ts': 'export function format(n: number): string {\n  return String(n);\n}\n',
     // edit one line in an old file: only problems on the new line block
@@ -65,6 +68,7 @@ test('react: ESLint + tsc + Prettier + dependency-cruiser on a real Next.js app'
   assert.ok(has(/file=web\/app\/client\.tsx,line=4,title=tsc TS2322/), r.ann.join('\n'));
   assert.ok(has(/file=web\/components\/Button\.tsx,title=prettier/), r.ann.join('\n'));
   assert.ok(has(/title=depcruise no-circular::Import cycle: lib\/b\.ts → lib\/c\.ts → lib\/b\.ts/), r.ann.join('\n'));
+  assert.ok(!has(/no-circular::Import cycle: lib\/t[12]\.ts/), 'type-only cycles are not runtime cycles\n' + r.ann.join('\n'));
   assert.ok(!has(/title=depcruise::/), 'dependency-cruiser must scan TS files (typescript installed next to depcruise)\n' + r.ann.join('\n'));
   assert.ok(!has(/::error file=web\/lib\/legacy\.ts/), 'pre-existing type errors from base do not block, even when the file is modified');
   assert.ok(has(/::error file=web\/lib\/old\.ts,line=3,title=eslint @typescript-eslint\/no-unused-vars/), r.ann.join('\n'));

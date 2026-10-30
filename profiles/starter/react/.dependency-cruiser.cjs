@@ -7,7 +7,8 @@ module.exports = {
       severity: 'error',
       comment: 'Import cycles make testing and splitting modules harder and often cause undefined errors at initialization.',
       from: {},
-      to: { circular: true },
+      // type-only imports are erased at build time, so a cycle that needs one is not a runtime cycle
+      to: { circular: true, viaOnly: { dependencyTypesNot: ['type-only'] } },
     },
     {
       name: 'no-dev-deps-in-prod-code',
