@@ -15,6 +15,7 @@
 import { readFile, writeFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { loadYaml } from './harness/lib.mjs';
+import { AGENT_PATHS, planAgentFiles } from './agents.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -372,6 +373,21 @@ export async function auditRepo(gh, cfg, repo) {
   r.checks.depsBot = has(/^\.github\/dependabot\.ya?ml$|(^|\/)renovate\.json5?$|^\.github\/renovate\.json5?$/) ? 'pass' : 'fail';
   r.hasPrTemplate = has(/(^|\/)pull_request_template\.md$/i) || has(/(^|\/)PULL_REQUEST_TEMPLATE\//i);
 
+  // Conventions for AI agents (AGENTS.md, CLAUDE.md, Copilot instructions, Claude Code hook, pr-lint)
+  r.agentFiles = {};
+  for (const p of AGENT_PATHS) {
+    if (!files.includes(p)) {
+      r.agentFiles[p] = null;
+      continue;
+    }
+    const c = await gh.get(`${base}/contents/${enc(p)}?ref=${br}`, [404]);
+    r.agentFiles[p] = c.data?.content ? unb64(c.data.content) : null;
+  }
+  const agents = await planAgentFiles(r.agentFiles);
+  r.checks.agents = agents.problems.length ? 'warn' : agents.files.length ? 'fail' : 'pass';
+  for (const msg of agents.problems) add('warn', msg);
+  if (agents.files.length) add('info', `AI agent conventions missing or outdated: ${agents.files.map((f) => `\`${f.path}\``).join(', ')}`);
+
   const va = await gh.get(`${base}/vulnerability-alerts`, [403, 404]);
   r.checks.vulnAlerts = va.status === 204 ? 'pass' : va.status === 404 ? 'fail' : 'unknown';
   if (r.checks.vulnAlerts === 'fail') add('warn', 'Dependabot alerts are disabled (free, should be enabled)');
@@ -494,6 +510,7 @@ export async function planFixes(cfg, r, repo) {
       out.push({ path: f, content: await readFile(path.join(ROOT, 'profiles/starter/hooks', f), 'utf8'), message: 'chore: add local secret hook (lefthook + gitleaks)' });
     }
   }
+  if (r.agentFiles) out.push(...(await planAgentFiles(r.agentFiles)).files);
   if (!r.hasPrTemplate) {
     out.push({ path: '.github/pull_request_template.md', content: await readFile(path.join(ROOT, 'pull_request_template.md'), 'utf8'), message: 'docs: add PR template' });
   }
@@ -578,15 +595,15 @@ export function render(cfg, results) {
   }
   lines.push(
     '## By repo', '',
-    '| Repo | Stack | Harness | Convention | Protection | CODEOWNERS | Deps bot | Vuln alerts | Dep security updates | Secret hook | History scan | Actions min | Notes |',
-    '|---|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|--:|---|',
+    '| Repo | Stack | Harness | Convention | Protection | CODEOWNERS | Deps bot | Vuln alerts | Dep security updates | Secret hook | AI agents | History scan | Actions min | Notes |',
+    '|---|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|--:|---|',
   );
   for (const r of active) {
     const c = r.checks;
     const notes = r.findings.filter((f) => !['critical', 'high'].includes(f.level)).map((f) => `${LEVEL[f.level]} ${f.msg}`);
     if (r.prUrl) notes.push(`🔧 [Fix PR](${r.prUrl})`);
     else if (r.fixes.length) notes.push(`🔧 will fix: ${r.fixes.map((f) => '`' + path.basename(f.path) + '`').join(', ')}`);
-    lines.push(`| [${r.name}](${r.url})${r.visibility === 'public' ? ' 🌐' : ''} | ${r.stacks.join(', ') || '-'} | ${ICON[c.harness]} | ${ICON[c.convention]} | ${ICON[c.protection]} | ${ICON[c.codeowners]} | ${ICON[c.depsBot]} | ${ICON[c.vulnAlerts]} | ${ICON[c.depsUpdates]} | ${ICON[c.hooks]} | ${ICON[c.secretScan]} | ${r.actionsMinutes ?? '❔'} | ${notes.join('<br>')} |`);
+    lines.push(`| [${r.name}](${r.url})${r.visibility === 'public' ? ' 🌐' : ''} | ${r.stacks.join(', ') || '-'} | ${ICON[c.harness]} | ${ICON[c.convention]} | ${ICON[c.protection]} | ${ICON[c.codeowners]} | ${ICON[c.depsBot]} | ${ICON[c.vulnAlerts]} | ${ICON[c.depsUpdates]} | ${ICON[c.hooks]} | ${ICON[c.agents]} | ${ICON[c.secretScan]} | ${r.actionsMinutes ?? '❔'} | ${notes.join('<br>')} |`);
   }
   const empty = results.filter((r) => r.empty).map((r) => r.name);
   if (empty.length) lines.push('', `Empty repos (skipped): ${empty.join(', ')}`);

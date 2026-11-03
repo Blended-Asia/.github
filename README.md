@@ -81,6 +81,23 @@ lefthook install                 # once per clone
 - Sample env files (`.env.example`, `.env.staging.example`…) are allowed, matching the CI allowlist.
 - The hook can be skipped with `--no-verify`, so it is a convenience, not enforcement. Enforcement stays in CI: TruffleHog on every PR and a weekly full-history scan. CI never reads the repo's `.gitleaks.toml`, so loosening it does not weaken PR checks.
 
+## AI agents (Claude Code, Codex, Cursor, Copilot)
+
+AI coding agents get the org's branch / commit / PR rules up front, so their PRs pass `org / pr-convention` the first time. org-audit (`fix=true`) adds or updates these files in every repo (sources in `profiles/starter/agents/`, merge logic in `scripts/agents.mjs`):
+
+| File in the child repo | Read by | Content |
+|---|---|---|
+| `AGENTS.md` | Codex, Cursor, Copilot coding agent, others | Managed block "Org conventions for AI agents" |
+| `CLAUDE.md` | Claude Code | Managed block that imports `@AGENTS.md` |
+| `.github/copilot-instructions.md` | GitHub Copilot (IDE) | Short version pointing to `AGENTS.md` |
+| `.claude/settings.json` | Claude Code | `PreToolUse` hook: runs `pr-lint.mjs --claude-hook` before every `gh pr create/edit` and blocks it (exit 2, reasons fed back to the agent) when the title, branch or body breaks the convention |
+| `.github/scripts/pr-lint.mjs` | everyone | The checker, same rules and wording as the CI check; reads repo overrides from `org-pr-convention.yml` `with:` |
+
+- Blocks live between `<!-- org-agents:begin … -->` / `<!-- org-agents:end -->`: repo-specific content outside the markers is kept, the block is replaced on update. Existing `.claude/settings.json` is merged (other settings and hooks kept); invalid JSON is reported, never overwritten.
+- Manual check: `node .github/scripts/pr-lint.mjs --title "feat(api): add x" --body-file pr.md`.
+- Only Claude Code supports a blocking hook. Other agents rely on the instructions; `org / pr-convention` in CI stays the enforcement.
+- `tests/agents.test.mjs` keeps pr-lint's defaults and wording equal to `pr-convention.yml`.
+
 ## Existing projects
 
 Existing repos are rolled out **observe first, enforce later**. Detailed instructions for humans and for Claude Code are in [`docs/onboarding-existing-repo.md`](docs/onboarding-existing-repo.md).

@@ -31,6 +31,8 @@ Commit messages: English, [Conventional Commits](https://www.conventionalcommits
   self-test.yml                                                    # CI for this repo
 workflow-templates/   callers that child repos copy (Blended-Asia, $default-branch is a placeholder)
 profiles/             base.yml (shared policy) · rails.yml react.yml node.yml (tools + rules) · starter/ (sample files for child repos)
+                      · starter/agents/ (AGENTS.md / CLAUDE.md / Copilot blocks, Claude Code hook, pr-lint.mjs)
+scripts/agents.mjs    merges the AI-agent convention files into child repos (managed blocks; used by org-audit fixes)
 scripts/harness/      lib (glob, git, YAML via ruby, annotations) · config (resolve + detect) · rules (architecture)
                       · stack (run tools, compare to baseline) · verdict (gate) · debt (measure debt of an existing repo before onboarding)
 docs/onboarding-existing-repo.md   process for bringing an EXISTING repo into the harness (observe → enforce)
