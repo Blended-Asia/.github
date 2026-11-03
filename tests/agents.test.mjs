@@ -168,3 +168,15 @@ test('AGENTS.md block states the same limits the checks enforce', async () => {
   for (const s of DEFAULTS.required_sections.split(',')) assert.ok(text.includes(`\`${s}\``), `section ${s}`);
   assert.match(text, /node \.github\/scripts\/pr-lint\.mjs/);
 });
+
+test('JS repos also get a .prettierignore block for the managed files (merged, idempotent)', async () => {
+  const { files } = await planAgentFiles({ '.prettierignore': '.next\npnpm-lock.yaml\n' }, { js: true });
+  const ignore = files.find((f) => f.path === '.prettierignore').content;
+  assert.ok(ignore.startsWith('.next\npnpm-lock.yaml\n'), 'repo entries kept');
+  for (const p of ['AGENTS.md', 'CLAUDE.md', '.github/copilot-instructions.md', '.claude/settings.json', '.github/scripts/pr-lint.mjs']) {
+    assert.match(ignore, new RegExp(`^${p.replace(/\./g, '\\.')}$`, 'm'), p);
+  }
+  const current = Object.fromEntries(files.map((f) => [f.path, f.content]));
+  assert.deepEqual((await planAgentFiles(current, { js: true })).files, []);
+  assert.ok(!(await planAgentFiles({})).files.some((f) => f.path === '.prettierignore'), 'non-JS repos: untouched');
+});

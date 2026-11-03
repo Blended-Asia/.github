@@ -92,6 +92,7 @@ AI coding agents get the org's branch / commit / PR rules up front, so their PRs
 | `.github/copilot-instructions.md` | GitHub Copilot (IDE) | Short version pointing to `AGENTS.md` |
 | `.claude/settings.json` | Claude Code | `PreToolUse` hook: runs `pr-lint.mjs --claude-hook` before every `gh pr create/edit` and blocks it (exit 2, reasons fed back to the agent) when the title, branch or body breaks the convention |
 | `.github/scripts/pr-lint.mjs` | everyone | The checker, same rules and wording as the CI check; reads repo overrides from `org-pr-convention.yml` `with:` |
+| `.prettierignore` (JS repos only) | Prettier | Managed block listing the files above: each repo has its own Prettier style, so formatting them would fail `stack / react` or make the next audit rewrite them |
 
 - Blocks live between `<!-- org-agents:begin … -->` / `<!-- org-agents:end -->`: repo-specific content outside the markers is kept, the block is replaced on update. Existing `.claude/settings.json` is merged (other settings and hooks kept); invalid JSON is reported, never overwritten.
 - Manual check: `node .github/scripts/pr-lint.mjs --title "feat(api): add x" --body-file pr.md`.
