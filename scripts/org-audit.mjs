@@ -383,7 +383,8 @@ export async function auditRepo(gh, cfg, repo) {
     const c = await gh.get(`${base}/contents/${enc(p)}?ref=${br}`, [404]);
     r.agentFiles[p] = c.data?.content ? unb64(c.data.content) : null;
   }
-  const agents = await planAgentFiles(r.agentFiles);
+  r.agentOpts = { js: files.includes('package.json') };
+  const agents = await planAgentFiles(r.agentFiles, r.agentOpts);
   r.checks.agents = agents.problems.length ? 'warn' : agents.files.length ? 'fail' : 'pass';
   for (const msg of agents.problems) add('warn', msg);
   if (agents.files.length) add('info', `AI agent conventions missing or outdated: ${agents.files.map((f) => `\`${f.path}\``).join(', ')}`);
@@ -510,7 +511,7 @@ export async function planFixes(cfg, r, repo) {
       out.push({ path: f, content: await readFile(path.join(ROOT, 'profiles/starter/hooks', f), 'utf8'), message: 'chore: add local secret hook (lefthook + gitleaks)' });
     }
   }
-  if (r.agentFiles) out.push(...(await planAgentFiles(r.agentFiles)).files);
+  if (r.agentFiles) out.push(...(await planAgentFiles(r.agentFiles, r.agentOpts)).files);
   if (!r.hasPrTemplate) {
     out.push({ path: '.github/pull_request_template.md', content: await readFile(path.join(ROOT, 'pull_request_template.md'), 'utf8'), message: 'docs: add PR template' });
   }
@@ -643,7 +644,7 @@ export async function main(env = process.env) {
   }
 
   const md = render(cfg, results);
-  const json = results.map(({ workflowFiles, found, ...rest }) => ({ ...rest, fixes: rest.fixes.map((f) => f.path) }));
+  const json = results.map(({ workflowFiles, agentFiles, agentOpts, found, ...rest }) => ({ ...rest, fixes: rest.fixes.map((f) => f.path) }));
   await writeFile(path.join(cfg.outDir, 'report.md'), md);
   await writeFile(path.join(cfg.outDir, 'report.json'), JSON.stringify(json, null, 2));
   if (env.GITHUB_STEP_SUMMARY && !cfg.quiet) await writeFile(env.GITHUB_STEP_SUMMARY, md, { flag: 'a' });
