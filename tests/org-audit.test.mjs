@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { main, normalizeCaller, callerOverrides, codeownersFor } from '../scripts/org-audit.mjs';
 import { ROOT } from './helpers.mjs';
+import { planAgentFiles } from '../scripts/agents.mjs';
+
+// Current AI-agent convention files, as a compliant repo has them.
+const AGENT_FILES = (await planAgentFiles({})).files;
 
 const b64 = (s) => Buffer.from(s).toString('base64');
 const now = new Date().toISOString();
@@ -40,6 +44,7 @@ beforeEach(() => {
     'compliant/.github/CODEOWNERS': '* @acme/dev\n/.github/workflows/ @acme/platform\n',
     'compliant/.github/harness.yml': 'review:\n  ai: true\n',
     'compliant/lefthook.yml': 'pre-commit:\n  commands:\n    gitleaks:\n      run: gitleaks git --pre-commit --staged\n',
+    ...Object.fromEntries(AGENT_FILES.map((f) => [`compliant/${f.path}`, f.content])),
     'old-ref/.pre-commit-config.yaml': 'repos:\n  - repo: https://github.com/psf/black\n',
     'tampered/.github/harness.yml': 'enforcement: observe\n',
     'old-ref/.github/harness.yml': 'architecture:\n  disable: [react/no-ts-ignore]\nchecks:\n  react:\n    prettier: false\nmerge:\n  bot_approve:\n    max_lines: 2000\n',
@@ -72,7 +77,7 @@ beforeEach(() => {
     ['GET', /^\/repos\/acme\/leaky$/, () => ({ security_and_analysis: { secret_scanning_push_protection: { status: 'disabled' } } })],
     ['GET', /\/repos\/acme\/empty\/git\/trees/, () => [409, null]],
     ['GET', /\/repos\/acme\/leaky\/git\/trees/, () => tree(['Dockerfile', 'apps/web/.env.production', '.env.example', 'supabase/config.toml', 'next.config.ts'])],
-    ['GET', /\/repos\/acme\/compliant\/git\/trees/, () => tree(['.github/workflows/org-harness.yml', '.github/workflows/org-pr-convention.yml', '.github/workflows/org-vercel-preview.yml', '.github/CODEOWNERS', '.github/dependabot.yml', '.github/pull_request_template.md', '.github/harness.yml', 'vercel.json', 'lefthook.yml'])],
+    ['GET', /\/repos\/acme\/compliant\/git\/trees/, () => tree(['.github/workflows/org-harness.yml', '.github/workflows/org-pr-convention.yml', '.github/workflows/org-vercel-preview.yml', '.github/CODEOWNERS', '.github/dependabot.yml', '.github/pull_request_template.md', '.github/harness.yml', 'vercel.json', 'lefthook.yml', ...AGENT_FILES.map((f) => f.path)])],
     ['GET', /\/repos\/acme\/old-ref\/git\/trees/, () => tree(['.github/workflows/ci.yml', '.github/harness.yml', 'CODEOWNERS', 'renovate.json', '.github/PULL_REQUEST_TEMPLATE/default.md', '.pre-commit-config.yaml'])],
     ['GET', /\/repos\/acme\/tampered\/git\/trees/, () => tree(['.github/workflows/org-harness.yml', '.github/workflows/org-pr-convention.yml', '.github/harness.yml'])],
     ['GET', /\/repos\/acme\/classic\/git\/trees/, () => tree(['.github/workflows/org-harness.yml', '.github/workflows/org-pr-convention.yml'])],
@@ -161,7 +166,7 @@ test('audit: classifies each repo correctly', async () => {
   assert.deepEqual(Object.keys(by).sort(), ['classic', 'compliant', 'empty', 'leaky', 'old-ref', 'tampered']);
 
   assert.deepEqual(by.compliant.checks, {
-    harness: 'pass', convention: 'pass', protection: 'pass', codeowners: 'pass', depsBot: 'pass', vulnAlerts: 'pass',
+    harness: 'pass', convention: 'pass', protection: 'pass', codeowners: 'pass', depsBot: 'pass', agents: 'pass', vulnAlerts: 'pass',
     depsUpdates: 'pass', hooks: 'pass', secretScan: 'pass',
   });
   assert.equal(by.compliant.actionsMinutes, 3 + 1 + 361, 'job minutes rounded up like billing; jobs that never started are skipped');
@@ -170,7 +175,7 @@ test('audit: classifies each repo correctly', async () => {
   assert.equal(by.leaky.checks.depsUpdates, 'fail');
   assert.equal(by.leaky.checks.secretScan, 'unknown');
   assert.equal(by['old-ref'].checks.hooks, 'warn', 'hook config without a secret scanner');
-  assert.match(md, /\| Dep security updates \| Secret hook \| History scan \| Actions min \|/);
+  assert.match(md, /\| Dep security updates \| Secret hook \| AI agents \| History scan \| Actions min \|/);
   assert.match(md, /Actions minutes \(job time, last 7 days\): \*\*365\*\* across 1 repo/);
   assert.equal(by.compliant.fixes.length, 0);
   assert.equal(by.compliant.findings.filter((f) => f.level !== 'info').length, 0, JSON.stringify(by.compliant.findings));
@@ -216,8 +221,10 @@ test('fix: adds all files, resets stale branch, bumps ref keeping config, does n
   const putPaths = (name) => puts(name).map((c) => decodeURIComponent(c.path.split('/contents/')[1])).sort();
 
   assert.deepEqual(putPaths('leaky'), [
-    '.github/CODEOWNERS', '.github/harness.yml', '.github/pull_request_template.md', '.github/workflows/org-harness.yml',
-    '.github/workflows/org-pr-convention.yml', '.github/workflows/org-vercel-preview.yml', '.gitleaks.toml', 'lefthook.yml',
+    '.claude/settings.json', '.github/CODEOWNERS', '.github/copilot-instructions.md', '.github/harness.yml',
+    '.github/pull_request_template.md', '.github/scripts/pr-lint.mjs', '.github/workflows/org-harness.yml',
+    '.github/workflows/org-pr-convention.yml', '.github/workflows/org-vercel-preview.yml', '.gitleaks.toml',
+    'AGENTS.md', 'CLAUDE.md', 'lefthook.yml',
   ]);
   assert.ok(calls.some((c) => c.method === 'PATCH' && c.path.includes('/leaky/git/refs/heads/ci/org-harness-v1') && c.body.force && c.body.sha === 'abc123'));
   const guard = puts('leaky').find((c) => c.path.endsWith('org-harness.yml'));
@@ -226,12 +233,19 @@ test('fix: adds all files, resets stale branch, bumps ref keeping config, does n
   assert.match(text, /branches: \[main\]/);
   assert.doesNotMatch(text, /Blended-Asia|\$default-branch/);
 
-  assert.deepEqual(putPaths('old-ref'), ['.github/workflows/ci.yml']);
-  const bumped = Buffer.from(puts('old-ref')[0].body.content, 'base64').toString();
+  assert.deepEqual(putPaths('old-ref'), [
+    '.claude/settings.json', '.github/copilot-instructions.md', '.github/scripts/pr-lint.mjs', '.github/workflows/ci.yml',
+    'AGENTS.md', 'CLAUDE.md',
+  ]);
+  const bumped = Buffer.from(puts('old-ref').find((c) => c.path.endsWith('ci.yml')).body.content, 'base64').toString();
   assert.match(bumped, /security\.yml@v1[\s\S]+semgrep: false[\s\S]+pr-convention\.yml@v1/);
   assert.doesNotMatch(bumped, /@v0/);
 
-  assert.deepEqual(putPaths('tampered'), ['.github/CODEOWNERS', '.github/pull_request_template.md', '.gitleaks.toml', 'lefthook.yml'], 'modified callers are only reported, never overwritten');
+  assert.deepEqual(putPaths('tampered'), [
+    '.claude/settings.json', '.github/CODEOWNERS', '.github/copilot-instructions.md', '.github/pull_request_template.md',
+    '.github/scripts/pr-lint.mjs', '.gitleaks.toml', 'AGENTS.md', 'CLAUDE.md', 'lefthook.yml',
+  ], 'modified callers are only reported, never overwritten');
+  assert.ok(!putPaths('tampered').some((p) => p.startsWith('.github/workflows/')), 'no workflow file is written for a tampered repo');
   assert.ok(!putPaths('old-ref').includes('lefthook.yml'), 'an existing hook config is never overwritten');
   assert.equal(puts('compliant').length, 0);
   assert.ok(!calls.some((c) => c.method === 'PATCH' && !c.path.includes('/leaky/')), 'a newly created branch is not reset');
