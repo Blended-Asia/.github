@@ -99,6 +99,15 @@ AI coding agents get the org's branch / commit / PR rules up front, so their PRs
 - Only Claude Code supports a blocking hook. Other agents rely on the instructions; `org / pr-convention` in CI stays the enforcement.
 - `tests/agents.test.mjs` keeps pr-lint's defaults and wording equal to `pr-convention.yml`.
 
+## Adopting a repo
+
+Three entry points, one flow: the ops-dashboard (product → Harness → **Add harness**), `gh harness init` in the repo, or the registry's **request-adoption** workflow. Each writes `repos/<repo>.yml` in `Blended-Asia/gh-harness` through a PR (`scripts/adopt.mjs request`).
+
+- **kind/team** are detected when not chosen: fewer than 20 commits → `new`; 2+ human authors in 90 days → `team`.
+- **Platform merges the registry PR** (the approval). Reconcile (on merge and hourly) opens **one** adoption PR in the repo with everything: org workflows, `harness.yml`, PR template, CODEOWNERS, AI-agent files, local secret hook. After it is merged, the next run adds the repo to its ruleset.
+- **Org admins: one click.** An org admin's request carries `auto: true`; the registry PR is merged right away, and reconcile — after verifying on GitHub that the requester is an active org admin — merges the adoption PR itself and protects the branch in the same run. Anyone else's `auto` is ignored (invariant 15).
+- **Already running the harness but not registered?** `adopt.mjs import` (registry workflow **import**) opens one registry PR for all of them.
+
 ## Existing projects
 
 Existing repos are rolled out **observe first, enforce later**. Detailed instructions for humans and for Claude Code are in [`docs/onboarding-existing-repo.md`](docs/onboarding-existing-repo.md).

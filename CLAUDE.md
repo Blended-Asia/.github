@@ -90,6 +90,8 @@ Before committing: run both the tests and actionlint. If you change `stack.mjs`,
 13. org-audit: the `.github` repo is public → quiet mode (no repo names in logs); reports go to the private repo `AUDIT_REPORT_REPO`. Modified callers are only reported, never overwritten automatically.
 14. **Auto-merge only for a vouched commit:** the gate enables auto-merge only when the bot approved this head SHA or a human other than the author approved it; it disables auto-merge it enabled earlier when a new commit needs human review. Otherwise a 0-approval (solo) ruleset would merge sensitive PRs on green checks alone.
 
+15. **One-click adoption is for org admins only.** A registry entry with `auto: true` makes reconcile merge the adoption PR and add the ruleset in the same run, but only when `requested_by` is an **active org admin, checked on GitHub with the admin App** at reconcile time. The registry file is never trusted for this (a forged `auto`/`requested_by` is ignored and the PR waits for a human). `auto` never applies to settings PRs.
+
 Any change touching the points above must include tests proving the invariant still holds, and must say so explicitly in the PR description.
 
 ## Adding a new stack (e.g. Go, Python)
