@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { validateEntry, entryYaml, rulesetName, request, reconcile, loadRegistry } from '../scripts/adopt.mjs';
+import { validateEntry, entryYaml, rulesetName, request, reconcile, loadRegistry, importAdopted } from '../scripts/adopt.mjs';
 import { loadYaml } from '../scripts/harness/lib.mjs';
 import { ROOT } from './helpers.mjs';
 
@@ -82,7 +82,8 @@ const registry = (entries) => {
 const put = (p) => calls.find((c) => c.method === 'PUT' && c.path.includes(p));
 
 test('validateEntry: names, kinds, teams, file name must match repo', () => {
-  assert.deepEqual(validateEntry({ repo: 'app', kind: 'new', team: 'solo' }), { repo: 'app', kind: 'new', team: 'solo', flow: null });
+  assert.deepEqual(validateEntry({ repo: 'app', kind: 'new', team: 'solo' }), { repo: 'app', kind: 'new', team: 'solo', flow: null, auto: false, requestedBy: null });
+  assert.throws(() => validateEntry({ repo: 'app', kind: 'new', team: 'solo', auto: 'yes' }), /auto must be true or false/);
   assert.throws(() => validateEntry({ repo: '../x', kind: 'new', team: 'solo' }), /invalid repo name/);
   assert.throws(() => validateEntry({ repo: 'app', kind: 'big', team: 'solo' }), /kind must be/);
   assert.throws(() => validateEntry({ repo: 'app', kind: 'new', team: 'all' }), /team must be/);
@@ -96,7 +97,7 @@ test('validateEntry: names, kinds, teams, file name must match repo', () => {
 
 test('entryYaml round-trips through the registry loader', async () => {
   const dir = registry({ 'app.yml': entryYaml({ repo: 'app', kind: 'existing', team: 'team', flow: 'gitflow', requestedBy: 'dev1' }) });
-  assert.deepEqual(await loadRegistry(dir), [{ repo: 'app', kind: 'existing', team: 'team', flow: 'gitflow' }]);
+  assert.deepEqual(await loadRegistry(dir), [{ repo: 'app', kind: 'existing', team: 'team', flow: 'gitflow', auto: false, requestedBy: 'dev1' }]);
   assert.equal(loadYaml(path.join(dir, 'app.yml')).requested_by, 'dev1');
 });
 
@@ -187,4 +188,75 @@ test('generated files for a new repo: no stale "observe" wording; CODEOWNERS als
   assert.match(harness, /New repo: enforced from day one/);
   const owners = unb64(put('/repos/acme/app/contents/.github/CODEOWNERS').body.content);
   for (const p of ['/.github/', '/lefthook.yml', '/.gitleaks.toml']) assert.match(owners, new RegExp(`^${p.replace(/[.]/g, '\\.')} @acme/platform$`, 'm'));
+});
+
+
+// ---------- one-click (org admin), detection, import ----------
+const commits = (n, authors = ['dev1']) => Array.from({ length: n }, (_, i) => ({ author: { login: authors[i % authors.length] } }));
+
+test('request: detects kind and team when not chosen, and writes auto for an org-admin request', async () => {
+  routes.unshift(
+    ['GET', /\/repos\/acme\/app\/commits\?per_page=30/, () => commits(5)],
+    ['GET', /\/repos\/acme\/app\/commits\?since=/, () => commits(12, ['dev1', 'dev2', 'renovate[bot]'])],
+  );
+  const r = await request({ ORG: 'acme', GH_TOKEN: 't', REGISTRY: 'gh-harness', REPO: 'app', KIND: 'auto', TEAM: '', REQUESTER: 'boss', AUTO: 'true' });
+  assert.deepEqual([r.entry.kind, r.entry.team, r.entry.auto], ['new', 'team', true], 'few commits → new; 2 humans (bots ignored) → team');
+  const yaml = unb64(put('/repos/acme/gh-harness/contents/repos/app.yml').body.content);
+  assert.match(yaml, /^auto: true/m);
+  assert.match(yaml, /^requested_by: boss$/m);
+});
+
+const autoRegistry = (requestedBy) => registry({ 'app.yml': entryYaml({ repo: 'app', kind: 'new', team: 'solo', flow: 'trunk', requestedBy, auto: true }) });
+
+test('reconcile: org-admin auto request → adoption PR merged by the harness App and branch protected in the same run', async () => {
+  routes.unshift(
+    ['GET', /\/orgs\/acme\/memberships\/boss$/, () => ({ role: 'admin', state: 'active' })],
+    ['PUT', /\/repos\/acme\/app\/pulls\/1\/merge$/, () => ({ merged: true })],
+  );
+  const { rows, failed } = await reconcile({ ORG: 'acme', GH_TOKEN: 'harness', ADMIN_TOKEN: 'admin', MANIFEST_DIR: autoRegistry('boss') });
+  assert.equal(failed, 0, JSON.stringify(rows));
+  const steps = rows[0].steps.join(' | ');
+  assert.match(steps, /adoption PR merged \(org-admin request by boss\)/);
+  assert.match(steps, /ruleset org-trunk-solo: created/);
+  const merge = calls.find((c) => c.method === 'PUT' && c.path.endsWith('/pulls/1/merge'));
+  assert.equal(merge.auth, 'Bearer harness', 'merged with the narrow harness App');
+  const membership = calls.find((c) => c.path === '/orgs/acme/memberships/boss');
+  assert.equal(membership.auth, 'Bearer admin', 'admin role checked on GitHub with the admin App');
+});
+
+test('reconcile: auto from a non-admin (or a forged registry file) is ignored — no merge, no ruleset yet', async () => {
+  routes.unshift(['GET', /\/orgs\/acme\/memberships\/dev1$/, () => ({ role: 'member', state: 'active' })]);
+  const { rows } = await reconcile({ ORG: 'acme', GH_TOKEN: 'harness', ADMIN_TOKEN: 'admin', MANIFEST_DIR: autoRegistry('dev1') });
+  assert.match(rows[0].steps.join(' | '), /auto ignored: dev1 is not an org admin/);
+  assert.ok(!calls.some((c) => c.method === 'PUT' && /\/merge$/.test(c.path)), 'never merged');
+  assert.ok(!calls.some((c) => /rulesets/.test(c.path)), 'no ruleset before a human merges the adoption PR');
+});
+
+test('reconcile: a failed auto-merge is reported and leaves the repo unprotected until merged by hand', async () => {
+  routes.unshift(
+    ['GET', /\/orgs\/acme\/memberships\/boss$/, () => ({ role: 'admin', state: 'active' })],
+    ['PUT', /\/repos\/acme\/app\/pulls\/1\/merge$/, () => [405, { message: 'Required status check is expected' }]],
+  );
+  const { rows } = await reconcile({ ORG: 'acme', GH_TOKEN: 'harness', ADMIN_TOKEN: 'admin', MANIFEST_DIR: autoRegistry('boss') });
+  assert.match(rows[0].steps.join(' | '), /auto-merge of the adoption PR failed/);
+  assert.ok(!calls.some((c) => /rulesets/.test(c.path)));
+});
+
+test('import: registers repos already running the harness, using harness.yml and the org ruleset; skips registered ones', async () => {
+  const has = new Set(['done', 'old']);
+  routes.unshift(
+    ['GET', /\/repos\/acme\/gh-harness\/contents\/repos$/, () => [{ name: 'done.yml' }]],
+    ['GET', /\/orgs\/acme\/repos\?/, () => ['done', 'old', 'app'].map((n) => repoObj(n))],
+    ['GET', /\/orgs\/acme\/rulesets\?/, () => [{ id: 5, name: 'org-gitflow-team' }]],
+    ['GET', /\/orgs\/acme\/rulesets\/5$/, () => ({ conditions: { repository_name: { include: ['old'] } } })],
+    ['GET', /\/repos\/acme\/(\w+)\/contents\/\.github\/workflows\/org-(harness|pr-convention)\.yml/, (m) => (has.has(m[1]) ? { content: b64('x') } : [404, null])],
+    ['GET', /\/repos\/acme\/old\/contents\/\.github\/harness\.yml/, () => ({ content: b64('enforcement: observe\n') })],
+    ['GET', /\/repos\/acme\/gh-harness$/, () => repoObj('gh-harness')],
+  );
+  const { entries, url } = await importAdopted({ ORG: 'acme', GH_TOKEN: 'harness', ADMIN_TOKEN: 'admin', REGISTRY: 'gh-harness' });
+  assert.deepEqual(entries.map((e) => [e.repo, e.kind, e.team, e.flow]), [['old', 'existing', 'team', 'gitflow']]);
+  assert.equal(url, 'https://github.com/acme/gh-harness/pull/1');
+  const file = put('/repos/acme/gh-harness/contents/repos/old.yml');
+  assert.equal(file.body.branch, 'import/adopted-repos');
+  assert.match(unb64(file.body.content), /^requested_by: import$/m);
 });
